@@ -277,8 +277,9 @@ function App() {
 
       try {
         const controller = new AbortController();
-        // 减少超时时间到10秒，加快故障转移
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        // 发码请求使用更长超时时间，避免过早中止
+        const timeoutMs = isSendSmsRequest ? 30000 : 10000;
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
         // 添加详细日志
         console.log(`🔄 请求 #${attempt + 1} 到: ${currentUrl.substring(0, 50)}...`);
@@ -300,6 +301,7 @@ function App() {
         // 添加详细的请求日志
         console.log(`📤 发送请求: ${currentUrl.substring(0, 50)}...`, {
           isSendSmsRequest,
+          超时时间: `${timeoutMs / 1000}秒`,
           代理类型: currentUrl.includes('cors.elfs.pp.ua') ? '自定义代理' :
             currentUrl.includes('corsproxy.io') ? 'corsproxy.io' :
               currentUrl.includes('allorigins.win') ? 'allorigins' : '其他',
@@ -787,6 +789,9 @@ function App() {
     }
   };
 
+  // 验证发码状态的函数
+
+
   const sendSms = async (idx: number) => {
     const row = tableData[idx];
     if (row.status === '已使用' || !row.sendApi) return;
@@ -813,69 +818,23 @@ function App() {
       // 明确标识这是发码请求，不进行重试，用户手动重试
       const response = await fetchWithRetry(row.sendApi, {}, 0, true);
 
-      // Check if response is ok first
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
-      }
+      // 只要请求发送成功（没有网络错误），就认定为成功并开启120秒冷却
+      console.log('发码请求已发送，响应状态:', response.status);
 
-      let data;
-
-      if (config.sendResponseType === 'json') {
-        const responseText = await response.text();
-        console.log('发码API响应:', responseText); // 添加调试日志
-        try {
-          data = JSON.parse(responseText);
-          // 添加详细的响应解析日志
-          console.log('发码API响应解析成功:', {
-            status: data.status,
-            message: data.msg || '无消息',
-            endTime: data.end_time || '无结束时间'
-          });
-        } catch (jsonError) {
-          console.error('JSON解析失败:', responseText);
-          throw new Error(`JSON解析失败: 响应内容不是有效的JSON格式。响应内容: ${responseText.substring(0, 200)}...`);
-        }
-      } else {
-        data = await response.text();
-        console.log('发码API响应(文本):', data);
-      }
-
-      console.log('解析后的数据:', data);
-
-      const result = {
-        success: config.sendParseRule.success(data),
-        message: config.sendParseRule.extractMessage(data)
-      };
-
-      console.log('解析结果:', result);
-
-      // 根据成功状态决定是否进入冷却：只有成功时才启动120秒冷却
-      if (result.success === true) {
-        newTableData[idx].lastSendResult = '✅ 发码成功: ' + result.message;
-
-        // 只有成功时才设置120秒冷却
-        newTableData[idx].sendCooldown = 120;
-        newTableData[idx].sendTimer = setInterval(() => {
-          newTableData[idx].sendCooldown--;
-          if (newTableData[idx].sendCooldown <= 0) {
-            if (newTableData[idx].sendTimer) {
-              clearInterval(newTableData[idx].sendTimer);
-            }
-            newTableData[idx].sendCooldown = 0;
-            newTableData[idx].sendTimer = null;
+      // 设置成功状态和120秒冷却
+      newTableData[idx].lastSendResult = '✅ 发码请求已发送';
+      newTableData[idx].sendCooldown = 120;
+      newTableData[idx].sendTimer = setInterval(() => {
+        newTableData[idx].sendCooldown--;
+        if (newTableData[idx].sendCooldown <= 0) {
+          if (newTableData[idx].sendTimer) {
+            clearInterval(newTableData[idx].sendTimer);
           }
-          setTableData([...newTableData]);
-        }, 1000);
-
-      } else if (result.success === 'rate_limit') {
-        newTableData[idx].lastSendResult = '⏱️ 频率限制: ' + result.message;
-        // 频率限制不设置冷却，用户可以选择稍后手动重试
-
-      } else {
-        newTableData[idx].lastSendResult = '❌ 发码失败: ' + result.message;
-        // 失败不设置冷却，用户可以立即重试
-      }
+          newTableData[idx].sendCooldown = 0;
+          newTableData[idx].sendTimer = null;
+        }
+        setTableData([...newTableData]);
+      }, 1000);
 
       setTableData([...newTableData]);
 
@@ -885,29 +844,16 @@ function App() {
 
       let userFriendlyMessage = '';
 
-      // 改进错误处理，提供更清晰的用户反馈
-      if (errorMessage.includes('AbortError') || errorMessage.includes('timeout')) {
-        userFriendlyMessage = `⏰ 请求超时: 网络连接不稳定，已自动重试多个代理服务，请稍后再试`;
-      } else if (errorMessage.includes('CORS') || errorMessage.includes('blocked') || errorMessage.includes('access control check')) {
-        userFriendlyMessage = `🚫 跨域请求被阻止: 代理服务可能不支持发码功能，请尝试其他代理或联系管理员`;
-      } else if (errorMessage.includes('preflight')) {
-        userFriendlyMessage = `🚫 预检请求失败: 当前代理不支持POST请求，请联系管理员配置适当的代理`;
-      } else if (errorMessage.includes('404')) {
-        userFriendlyMessage = `❌ API端点未找到: 请检查API地址是否正确`;
-      } else if (errorMessage.includes('429')) {
-        userFriendlyMessage = `⚠️ 请求频率过高: 请等待一段时间后重试`;
-      } else if (errorMessage.includes('403')) {
-        userFriendlyMessage = `🔒 请求被拒绝: 代理服务器拒绝了请求，请尝试其他代理或联系管理员`;
-      } else if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503')) {
-        userFriendlyMessage = `🔧 服务器错误: API服务暂时不可用，请稍后重试`;
+      // 简化错误处理，专注于网络层面错误
+      if (errorMessage.includes('AbortError') || errorMessage.includes('timeout') || errorMessage.includes('signal is aborted')) {
+        userFriendlyMessage = `⏰ 网络超时: 请求可能已发送，请稍后重试`;
       } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
-        userFriendlyMessage = `🌐 网络连接失败: 请检查网络连接或稍后重试`;
+        userFriendlyMessage = `🌐 网络连接失败: 请检查网络连接`;
       } else {
         userFriendlyMessage = `❌ 发码请求失败: ${errorMessage}`;
       }
 
       newTableData[idx].lastSendResult = userFriendlyMessage;
-
       // 网络错误不设置冷却，用户可以立即重试
       setTableData([...newTableData]);
     }
