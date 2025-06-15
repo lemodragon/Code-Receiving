@@ -94,8 +94,8 @@ function App() {
 
     if (isProduction) {
       // 优先使用用户的自定义代理，特别是对于发码请求
-      if (isSendSmsRequest || originalUrl.includes('/sendSms')) {
-        // 发码请求使用自定义代理
+      if ((isSendSmsRequest || originalUrl.includes('/sendSms')) && customProxy) {
+        // 发码请求强制使用自定义代理（如果已配置）
         let proxyUrl;
         if (customProxy.includes('proxy?url=')) {
           // Deno代理格式：https://cors.elfs.pp.ua/proxy?url=
@@ -107,19 +107,30 @@ function App() {
           // 其他格式代理
           proxyUrl = customProxy + originalUrl;
         }
-        console.log('使用自定义代理处理发码请求:', {
+        console.log('🎯 强制使用自定义代理处理发码请求:', {
           原始URL: originalUrl,
-          代理URL: proxyUrl,
-          代理服务: customProxy
+          代理URL: proxyUrl.substring(0, 80) + '...',
+          代理服务: customProxy,
+          代理类型: customProxy.includes('cors.elfs.pp.ua') ? 'Deno代理' : '其他自定义代理'
         });
         return proxyUrl;
+      } else if (isSendSmsRequest || originalUrl.includes('/sendSms')) {
+        // 发码请求但没有自定义代理，警告用户
+        console.warn('⚠️ 发码请求但未配置自定义代理，可能会失败。建议配置: https://cors.elfs.pp.ua/proxy?url=');
+        // 回退到通用代理，但成功率较低
+        const fallbackProxy = 'https://corsproxy.io/?' + encodeURIComponent(originalUrl);
+        console.log('使用备用代理处理发码请求:', {
+          原始URL: originalUrl,
+          代理URL: fallbackProxy.substring(0, 80) + '...'
+        });
+        return fallbackProxy;
       } else {
         // 普通GET请求可以继续使用allorigins.win
         const primaryProxy = 'https://api.allorigins.win/raw?url=';
         const proxyUrl = primaryProxy + encodeURIComponent(originalUrl);
-        console.log('使用allorigins代理处理普通请求:', {
+        console.log('✅ 使用allorigins代理处理普通请求:', {
           原始URL: originalUrl,
-          代理URL: proxyUrl
+          代理URL: proxyUrl.substring(0, 80) + '...'
         });
         return proxyUrl;
       }
@@ -154,19 +165,83 @@ function App() {
     // 检查是否是发码请求（可能需要预检请求）
     const isSendSmsRequest = url.includes('/sendSms');
 
-    // 备用代理服务列表，只在主代理失败时使用
+    // 过滤掉已知失效的代理服务，移除cors-anywhere.herokuapp.com
     const corsProxies = [
       'https://corsproxy.io/?',
-      'https://cors-anywhere.herokuapp.com/',
       'https://cors-proxy.htmldriven.com/?url=',
       'https://thingproxy.freeboard.io/fetch/',
       'https://api.codetabs.com/v1/proxy?quest='
     ];
 
-    // 如果是发码请求且有自定义代理，将自定义代理放在备用列表最前面
+    // 对于发码请求，如果有自定义代理则优先使用且多次重试
     if (isSendSmsRequest && customProxy && isProduction) {
-      corsProxies.unshift(customProxy);
-      console.log('发码请求检测到自定义代理，已添加到备用列表首位:', customProxy);
+      console.log('发码请求将优先使用自定义代理:', customProxy);
+
+      // 对自定义代理进行多次重试（最多3次）
+      for (let customAttempt = 0; customAttempt < 3; customAttempt++) {
+        try {
+          let proxyUrl = url;
+
+          // 提取原始URL（如果已经是代理URL）
+          let originalUrl = url;
+          if (url.includes('proxy?url=')) {
+            originalUrl = decodeURIComponent(url.split('proxy?url=')[1]);
+          }
+
+          // 构建自定义代理URL
+          if (customProxy.includes('proxy?url=')) {
+            proxyUrl = customProxy + encodeURIComponent(originalUrl);
+          } else if (customProxy.endsWith('/')) {
+            proxyUrl = customProxy + originalUrl;
+          } else {
+            proxyUrl = customProxy + originalUrl;
+          }
+
+          console.log(`自定义代理尝试 ${customAttempt + 1}/3:`, {
+            原始URL: originalUrl.substring(0, 50) + '...',
+            代理URL: proxyUrl.substring(0, 50) + '...',
+            代理服务: customProxy
+          });
+
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+          const response = await fetch(proxyUrl, {
+            ...options,
+            signal: controller.signal,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              ...options.headers
+            }
+          });
+
+          clearTimeout(timeoutId);
+
+          console.log(`自定义代理响应 ${customAttempt + 1}: ${response.status} ${response.statusText}`);
+
+          if (response.ok) {
+            console.log('✅ 自定义代理请求成功');
+            return response;
+          } else if (response.status === 403) {
+            console.warn('❌ 自定义代理返回403，跳过后续重试');
+            break; // 403错误直接跳出自定义代理重试
+          }
+
+          // 其他错误状态继续重试
+          if (customAttempt < 2) {
+            console.log(`自定义代理重试等待 ${1000 * (customAttempt + 1)}ms...`);
+            await new Promise(resolve => setTimeout(resolve, 1000 * (customAttempt + 1)));
+          }
+
+        } catch (error) {
+          console.warn(`自定义代理尝试 ${customAttempt + 1} 失败:`, error);
+          if (customAttempt < 2) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * (customAttempt + 1)));
+          }
+        }
+      }
+
+      console.log('⚠️ 自定义代理所有尝试均失败，将使用备用代理');
     }
 
     console.log('fetchWithRetry 开始处理:', {
@@ -242,7 +317,7 @@ function App() {
         const timeoutId = setTimeout(() => controller.abort(), 10000);
 
         // 添加详细日志
-        console.log(`请求 #${attempt + 1} 到: ${currentUrl.substring(0, 50)}...`);
+        console.log(`🔄 请求 #${attempt + 1} 到: ${currentUrl.substring(0, 50)}...`);
 
         // 检查是否是发码请求，添加特殊处理
         let fetchOptions = { ...options };
@@ -259,9 +334,11 @@ function App() {
         };
 
         // 添加详细的请求日志
-        console.log(`发送请求: ${currentUrl.substring(0, 50)}...`, {
+        console.log(`📤 发送请求: ${currentUrl.substring(0, 50)}...`, {
           isSendSmsRequest,
-          headers: fetchOptions.headers,
+          代理类型: currentUrl.includes('cors.elfs.pp.ua') ? '自定义代理' :
+            currentUrl.includes('corsproxy.io') ? 'corsproxy.io' :
+              currentUrl.includes('allorigins.win') ? 'allorigins' : '其他',
           attempt: attempt + 1
         });
 
@@ -275,6 +352,13 @@ function App() {
         // 检查响应状态
         if (response.ok) {
           return response;
+        } else if (response.status === 403) {
+          // 403错误（如cors-anywhere）快速跳过到下一个代理
+          console.warn(`❌ 代理返回403 Forbidden，快速跳过到下一个代理...`);
+          if (attempt < maxRetries && isProduction) {
+            // 不等待，直接尝试下一个代理
+            continue;
+          }
         } else if (response.status === 429) {
           // 速率限制，等待后重试
           console.warn(`速率限制 (429)，等待后重试...`);
@@ -457,7 +541,7 @@ function App() {
       } else {
         // 默认使用新的Deno代理
         setCustomProxy('https://cors.elfs.pp.ua/proxy?url=');
-        console.log('使用默认Deno代理: https://cors.elfs.pp.ua/proxy?url=');
+        console.log('已加载自定义代理: https://cors.elfs.pp.ua/proxy?url=');
       }
     } catch (error) {
       console.error('加载代理配置失败:', error);
