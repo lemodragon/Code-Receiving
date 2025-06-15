@@ -574,6 +574,27 @@ npm run build
 
 ### GitHub Pages 部署
 
+#### 方法1: 自动部署（推荐）
+项目已配置GitHub Actions自动部署：
+
+1. **推送代码到main分支**
+   ```bash
+   git add .
+   git commit -m "Update project"
+   git push origin main
+   ```
+
+2. **GitHub Actions会自动：**
+   - 使用 `npm run build:github` 构建项目
+   - 部署到GitHub Pages
+
+3. **配置GitHub Pages（一次性设置）**
+   - 进入仓库设置 → Pages
+   - Source: GitHub Actions
+
+#### 方法2: 手动构建部署
+如果需要手动部署：
+
 1. **构建项目**
    ```bash
    npm run build:github
@@ -646,26 +667,59 @@ npm run build:netlify
 ## 🔄 CI/CD 配置
 
 ### GitHub Actions (GitHub Pages)
+项目已包含完整的GitHub Actions配置 (`.github/workflows/deploy.yml`)：
+
 ```yaml
 name: Deploy to GitHub Pages
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
-      - run: npm ci
-      - run: npm run build:github
-      - uses: peaceiris/actions-gh-pages@v3
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build:github
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
+          path: ./dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 ```
+
+**特点：**
+- ✅ 使用最新的GitHub Pages Actions
+- ✅ 自动使用 `npm run build:github` 构建
+- ✅ 支持手动触发 (`workflow_dispatch`)
+- ✅ 正确的权限配置
 
 ### Netlify (自动配置)
 Netlify 会自动读取 `netlify.toml` 配置：
@@ -678,12 +732,23 @@ Netlify 会自动读取 `netlify.toml` 配置：
 ## 🛠️ 故障排除
 
 ### 问题1: GitHub Pages 显示白屏
-**原因**: 使用了错误的构建版本（Netlify版本）
+**原因**: GitHub Actions使用了错误的构建命令
 **解决**: 
-```bash
-npm run build:github
-git add dist/ && git commit -m "Fix GitHub Pages build" && git push
-```
+1. **检查 `.github/workflows/deploy.yml` 中的构建命令**
+   ```yaml
+   - name: Build
+     run: npm run build:github  # 确保使用这个命令
+   ```
+
+2. **如果使用手动部署**
+   ```bash
+   npm run build:github
+   git add dist/ && git commit -m "Fix GitHub Pages build" && git push
+   ```
+
+3. **触发重新部署**
+   - 推送任何更改到main分支
+   - 或在GitHub仓库的Actions页面手动触发工作流
 
 ### 问题2: Netlify 显示白屏
 **原因**: 使用了错误的构建版本（GitHub版本）

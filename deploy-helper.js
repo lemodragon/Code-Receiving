@@ -98,10 +98,17 @@ function showBuildResult(platform) {
         console.log('\n📖 部署指导:');
         switch (platform) {
             case 'github':
+                console.log('   🚀 GitHub Pages 自动部署 (推荐):');
+                console.log('   1. git add .');
+                console.log('   2. git commit -m "Update project"');
+                console.log('   3. git push origin main');
+                console.log('   4. GitHub Actions 会自动构建和部署');
+                console.log('');
+                console.log('   📋 手动部署 (备选):');
                 console.log('   1. git add dist/');
                 console.log('   2. git commit -m "Build for GitHub Pages"');
                 console.log('   3. git push origin main');
-                console.log('   4. 在 GitHub 仓库设置中配置 Pages (Source: main branch, /dist folder)');
+                console.log('   4. 在 GitHub 仓库设置中配置 Pages (Source: Deploy from a branch)');
                 break;
             case 'netlify':
                 console.log('   1. 如果已连接 GitHub: 推送代码，Netlify 会自动部署');
