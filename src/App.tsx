@@ -78,16 +78,18 @@ function App() {
     const isProduction = isProductionEnvironment();
 
     if (isProduction) {
-      // 生产环境：使用CORS代理服务
-      const corsProxyUrl = 'https://cors-anywhere.herokuapp.com/';
+      // 生产环境：优先使用您的自定义Deno CORS代理
+      const customDenoProxy = 'https://cors.elfs.pp.ua/proxy?url=';
+
       // 备用CORS代理服务列表
       const backupProxies = [
         'https://api.allorigins.win/raw?url=',
-        'https://corsproxy.io/?'
+        'https://corsproxy.io/?',
+        'https://cors-anywhere.herokuapp.com/'
       ];
 
-      // 优先使用主要的CORS代理
-      return corsProxyUrl + encodeURIComponent(originalUrl);
+      // 优先使用您的自定义Deno代理
+      return customDenoProxy + encodeURIComponent(originalUrl);
     } else {
       // 开发环境：使用Vite代理配置
       if (originalUrl.includes('csfaka.cn')) {
@@ -105,21 +107,32 @@ function App() {
     let lastError: Error;
     const isProduction = isProductionEnvironment();
 
-    // 备用CORS代理服务列表
-    const backupProxies = [
+    // CORS代理服务列表（按可靠性排序）
+    const corsProxies = [
+      'https://cors.elfs.pp.ua/proxy?url=',
       'https://api.allorigins.win/raw?url=',
-      'https://corsproxy.io/?'
+      'https://corsproxy.io/?',
+      'https://cors-anywhere.herokuapp.com/'
     ];
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       let currentUrl = url;
 
-      // 如果是生产环境且前面的尝试失败，尝试使用备用代理
-      if (isProduction && attempt > 0 && url.includes('cors-anywhere.herokuapp.com')) {
-        const originalUrl = decodeURIComponent(url.replace('https://cors-anywhere.herokuapp.com/', ''));
-        const proxyIndex = (attempt - 1) % backupProxies.length;
-        currentUrl = backupProxies[proxyIndex] + encodeURIComponent(originalUrl);
-        console.log(`尝试使用备用代理 ${proxyIndex + 1}:`, currentUrl);
+      // 如果是生产环境且前面的尝试失败，尝试使用不同的代理
+      if (isProduction && attempt > 0) {
+        // 提取原始URL
+        let originalUrl = url;
+        for (const proxy of corsProxies) {
+          if (url.includes(proxy.replace('?', '\\?'))) {
+            originalUrl = decodeURIComponent(url.replace(proxy, ''));
+            break;
+          }
+        }
+
+        // 尝试下一个代理
+        const proxyIndex = attempt % corsProxies.length;
+        currentUrl = corsProxies[proxyIndex] + encodeURIComponent(originalUrl);
+        console.log(`尝试使用代理 ${proxyIndex + 1}: ${corsProxies[proxyIndex]}`);
       }
 
       try {
