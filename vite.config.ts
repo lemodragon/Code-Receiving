@@ -14,6 +14,7 @@ const httpsAgent = new https.Agent({
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  base: process.env.NODE_ENV === 'production' ? '/Code-Receiving/' : '/',
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
@@ -47,11 +48,11 @@ export default defineConfig({
               }));
             }
           });
-          
+
           proxy.on('proxyReq', (proxyReq, req, res) => {
             console.log('Proxying request to csfaka:', req.url);
           });
-          
+
           proxy.on('proxyRes', (proxyRes, req, res) => {
             console.log('Received response from csfaka:', proxyRes.statusCode);
           });
@@ -81,11 +82,11 @@ export default defineConfig({
               res.end('External API service is temporarily unavailable. Please try again later.');
             }
           });
-          
+
           proxy.on('proxyReq', (proxyReq, req, res) => {
             console.log('Proxying request to api-sms:', req.url);
           });
-          
+
           proxy.on('proxyRes', (proxyRes, req, res) => {
             console.log('Received response from api-sms:', proxyRes.statusCode);
           });
