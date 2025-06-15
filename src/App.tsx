@@ -426,8 +426,8 @@ function App() {
 
       // 添加延迟避免频率限制（最后一个请求不需要延迟）
       if (i < uniqueApis.length - 1) {
-        console.log('等待1.5秒后检测下一个API...');
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        console.log('等待0.8秒后检测下一个API...(Deno代理限制100次/分钟)');
+        await new Promise(resolve => setTimeout(resolve, 800));
       }
     }
 
@@ -1463,21 +1463,23 @@ function App() {
                       https://cors.elfs.pp.ua/proxy?url= (Deno代理)
                     </button>
                     <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">推荐</span>
-                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">用户专用</span>
+                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">100次/分钟</span>
                   </li>
-                  <li>
+                  <li className="flex items-center gap-2">
                     <button
-                      onClick={() => setCustomProxy('https://corsproxy.io/?')}
+                      onClick={() => setCustomProxy('https://cors.bridged.cc/')}
                       className="text-blue-600 hover:text-blue-800 text-sm"
                     >
-                      https://corsproxy.io/? (corsproxy.io)
+                      https://cors.bridged.cc/ (Bridged)
                     </button>
+                    <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">API检测推荐</span>
+                    <span className="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full">无限制</span>
                   </li>
-                  <li className="opacity-50">
-                    <span className="text-gray-500 text-sm line-through">
-                      https://cors-anywhere.herokuapp.com/ (已失效)
+                  <li className="flex items-center gap-2 opacity-70">
+                    <span className="text-gray-600 text-sm">
+                      https://corsproxy.io/? (需注册)
                     </span>
-                    <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full ml-2">不可用</span>
+                    <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full">需账户</span>
                   </li>
                 </ul>
               </div>
