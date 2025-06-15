@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:github": "cross-env VITE_DEPLOY_TARGET=github vite build",
     "build:netlify": "cross-env VITE_DEPLOY_TARGET=netlify vite build",
+    "deploy": "node deploy-helper.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },

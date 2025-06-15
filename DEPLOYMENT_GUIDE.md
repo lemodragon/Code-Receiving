@@ -9,6 +9,7 @@
 - [生产环境优化](#生产环境优化)
 - [监控和维护](#监控和维护)
 - [故障排除](#故障排除)
+- [多平台部署指南](#多平台部署指南)
 
 ## 🚀 部署概述
 
@@ -535,3 +536,180 @@ openssl s_client -connect your-domain.com:443
 
 **最后更新**: 2024年6月15日
 **版本**: v1.0.0 
+
+# 🚀 多平台部署指南
+
+## 概述
+
+本项目支持多个平台部署，每个平台需要不同的构建配置：
+
+- **GitHub Pages**: 需要仓库名前缀路径
+- **Netlify**: 使用根路径
+- **其他静态托管**: 通常使用根路径
+
+## 🔧 构建命令
+
+### GitHub Pages 部署
+```bash
+npm run build:github
+```
+- 生成带有 `/Code-Receiving/` 前缀的资源路径
+- 适用于 GitHub Pages 部署
+
+### Netlify 部署
+```bash
+npm run build:netlify
+```
+- 生成根路径的资源路径
+- 适用于 Netlify 和大多数静态托管平台
+
+### 通用构建（默认）
+```bash
+npm run build
+```
+- 使用默认配置（根路径）
+- 适用于大多数静态托管平台
+
+## 📋 部署步骤
+
+### GitHub Pages 部署
+
+1. **构建项目**
+   ```bash
+   npm run build:github
+   ```
+
+2. **提交构建产物**
+   ```bash
+   git add dist/
+   git commit -m "Build for GitHub Pages"
+   git push origin main
+   ```
+
+3. **配置 GitHub Pages**
+   - 进入仓库设置 → Pages
+   - Source: Deploy from a branch
+   - Branch: main
+   - Folder: /dist
+
+### Netlify 部署
+
+#### 方法1: 自动部署（推荐）
+1. **连接 GitHub 仓库到 Netlify**
+2. **Netlify 会自动使用 `netlify.toml` 配置**
+   - 构建命令: `npm run build:netlify`
+   - 发布目录: `dist`
+
+#### 方法2: 手动部署
+1. **构建项目**
+   ```bash
+   npm run build:netlify
+   ```
+
+2. **上传 dist 目录到 Netlify**
+
+### 其他静态托管平台
+
+大多数平台使用根路径，可以使用：
+```bash
+npm run build:netlify
+```
+
+## ⚠️ 重要注意事项
+
+### 构建产物冲突
+- **不要同时提交两种构建产物**
+- 每次部署前确保使用正确的构建命令
+- `dist/` 目录内容会根据构建命令不同而变化
+
+### 资源路径差异
+- **GitHub Pages**: `/Code-Receiving/assets/index-xxx.js`
+- **Netlify**: `/assets/index-xxx.js`
+
+### 白屏问题排查
+如果部署后出现白屏：
+
+1. **检查浏览器控制台**
+   - 查看是否有 404 错误
+   - 确认资源路径是否正确
+
+2. **验证构建版本**
+   ```bash
+   # 检查 dist/index.html 中的资源路径
+   cat dist/index.html | grep -E "(src=|href=)"
+   ```
+
+3. **使用正确的构建命令**
+   - GitHub Pages: `npm run build:github`
+   - Netlify: `npm run build:netlify`
+
+## 🔄 CI/CD 配置
+
+### GitHub Actions (GitHub Pages)
+```yaml
+name: Deploy to GitHub Pages
+on:
+  push:
+    branches: [ main ]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - run: npm ci
+      - run: npm run build:github
+      - uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+```
+
+### Netlify (自动配置)
+Netlify 会自动读取 `netlify.toml` 配置：
+```toml
+[build]
+  publish = "dist"
+  command = "npm run build:netlify"
+```
+
+## 🛠️ 故障排除
+
+### 问题1: GitHub Pages 显示白屏
+**原因**: 使用了错误的构建版本（Netlify版本）
+**解决**: 
+```bash
+npm run build:github
+git add dist/ && git commit -m "Fix GitHub Pages build" && git push
+```
+
+### 问题2: Netlify 显示白屏
+**原因**: 使用了错误的构建版本（GitHub版本）
+**解决**: 在 Netlify 控制台触发重新部署，或推送新的提交
+
+### 问题3: 资源文件 404 错误
+**原因**: 资源路径不匹配部署平台要求
+**解决**: 检查并使用正确的构建命令
+
+## 📊 平台对比
+
+| 平台 | 构建命令 | 资源路径 | 自动部署 |
+|------|----------|----------|----------|
+| GitHub Pages | `npm run build:github` | `/Code-Receiving/assets/` | ✅ |
+| Netlify | `npm run build:netlify` | `/assets/` | ✅ |
+| Vercel | `npm run build:netlify` | `/assets/` | ✅ |
+| 其他平台 | `npm run build:netlify` | `/assets/` | 取决于平台 |
+
+## 🎯 最佳实践
+
+1. **开发时使用 `npm run dev`**
+2. **部署前确认目标平台**
+3. **使用对应的构建命令**
+4. **测试部署结果**
+5. **不要混合不同平台的构建产物**
+
+---
+
+**需要帮助？** 检查浏览器控制台错误信息，确认使用了正确的构建命令。 
