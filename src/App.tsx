@@ -370,6 +370,13 @@ function App() {
     try {
       const proxyUrl = getProxyUrl(apiUrl);
       const response = await fetchWithRetry(proxyUrl, {}, 1); // 只尝试一次
+
+      // 429频率限制说明API服务正常，只是请求太频繁
+      if (response.status === 429) {
+        console.log('检测到429频率限制，API服务正常:', apiUrl.substring(0, 50));
+        return 'online'; // API在线，只是频率限制
+      }
+
       return response.ok ? 'online' : 'offline';
     } catch (error) {
       console.warn('API状态检测失败:', error);
@@ -377,7 +384,7 @@ function App() {
     }
   };
 
-  // 批量检测API状态
+  // 批量检测API状态 - 改为串行检测避免频率限制
   const checkAllApiStatus = async () => {
     const uniqueApis = [...new Set(tableData.map(row => row.api))];
     const statusUpdates: { [key: string]: 'checking' | 'online' | 'offline' } = {};
@@ -388,21 +395,43 @@ function App() {
     });
     setApiStatus(statusUpdates);
 
-    // 并发检测所有API状态
-    const statusPromises = uniqueApis.map(async (api) => {
-      const status = await checkApiStatus(api);
-      return { api, status };
-    });
+    console.log(`🔍 开始串行检测 ${uniqueApis.length} 个API状态，避免频率限制...`);
 
-    const results = await Promise.all(statusPromises);
-
-    // 更新状态
+    // 串行检测API状态，添加延迟避免频率限制
     const finalStatus: { [key: string]: 'online' | 'offline' } = {};
-    results.forEach(({ api, status }) => {
-      finalStatus[api] = status;
-    });
 
-    setApiStatus(finalStatus);
+    for (let i = 0; i < uniqueApis.length; i++) {
+      const api = uniqueApis[i];
+      console.log(`检测API ${i + 1}/${uniqueApis.length}: ${api.substring(0, 50)}...`);
+
+      try {
+        const status = await checkApiStatus(api);
+        finalStatus[api] = status;
+
+        // 更新单个API状态
+        setApiStatus(prev => ({
+          ...prev,
+          [api]: status
+        }));
+
+        console.log(`API ${i + 1} 检测完成: ${status}`);
+      } catch (error) {
+        console.warn(`API ${i + 1} 检测失败:`, error);
+        finalStatus[api] = 'offline';
+        setApiStatus(prev => ({
+          ...prev,
+          [api]: 'offline'
+        }));
+      }
+
+      // 添加延迟避免频率限制（最后一个请求不需要延迟）
+      if (i < uniqueApis.length - 1) {
+        console.log('等待1.5秒后检测下一个API...');
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    }
+
+    console.log('✅ API状态检测完成:', finalStatus);
 
     // 测试发码代理是否工作正常
     if (uniqueApis.length > 0 && uniqueApis.some(api => api.includes('sendSms'))) {
@@ -1355,6 +1384,7 @@ function App() {
             >
               <Activity className="w-4 h-4" />
               检测API状态
+              <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">串行检测</span>
             </button>
 
             <button
@@ -1476,6 +1506,9 @@ function App() {
                 <div className="mt-3 pt-3 border-t border-yellow-200">
                   <p className="text-xs text-yellow-600">
                     💡 提示: 点击"测试"按钮验证代理是否正常工作。如果发码功能不正常，请尝试更换代理服务。
+                  </p>
+                  <p className="text-xs text-yellow-600 mt-1">
+                    ⚠️ 注意: 大量API检测可能触发代理频率限制(429错误)，现已优化为串行检测并添加延迟。
                   </p>
                 </div>
               </div>
