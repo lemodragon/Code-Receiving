@@ -35,7 +35,7 @@ interface APIConfig {
   sendUrlPattern?: RegExp;
   sendResponseType?: 'text' | 'json';
   sendParseRule?: {
-    success: (data: any) => boolean;
+    success: (data: any) => boolean | 'rate_limit';
     extractMessage: (data: any) => string;
     cooldownTime: number;
     getEndTime?: (data: any) => string | null;
@@ -463,16 +463,44 @@ function App() {
         sendParseRule: {
           success: (data: any) => {
             // 根据实际API响应格式调整判断逻辑
-            // status 200 = 成功, status 201 = 频率限制但请求有效
+            // status 200 = 发码成功
+            // status 201 = 频率限制，需要特殊处理但不算失败
             if (data.status === 200) {
               return true; // 发码成功
             } else if (data.status === 201) {
-              return false; // 频率限制，视为失败但会显示具体消息
+              return 'rate_limit'; // 频率限制，特殊返回值
             }
             return false;
           },
           extractMessage: (data: any) => {
-            // 优先使用msg字段
+            // 对于频率限制，提供更清晰的信息
+            if (data.status === 201) {
+              const endTime = data.end_time;
+              const baseMsg = data.msg || '请求太频繁，请稍后再试';
+
+              if (endTime) {
+                // 计算剩余时间
+                const endDate = new Date(endTime);
+                const now = new Date();
+                const remainingMs = endDate.getTime() - now.getTime();
+                const remainingMinutes = Math.ceil(remainingMs / 60000);
+
+                if (remainingMinutes > 0) {
+                  return `${baseMsg}（预计 ${remainingMinutes} 分钟后可用）`;
+                } else {
+                  return `${baseMsg}（现在应该可以重试了）`;
+                }
+              }
+
+              // 如果有嵌套的message，优先使用
+              if (data.data && data.data.data && data.data.data.message) {
+                return `频率限制: ${data.data.data.message}`;
+              }
+
+              return `频率限制: ${baseMsg}`;
+            }
+
+            // 成功或其他情况的处理
             if (data.msg) {
               return data.msg;
             }
@@ -782,8 +810,8 @@ function App() {
       // 发码请求直接传递原始URL给fetchWithRetry，让它内部处理代理逻辑
       console.log('发送发码请求到:', row.sendApi);
 
-      // 明确标识这是发码请求，确保使用自定义代理重试逻辑
-      const response = await fetchWithRetry(row.sendApi, {}, 2, true);
+      // 明确标识这是发码请求，不进行重试，用户手动重试
+      const response = await fetchWithRetry(row.sendApi, {}, 0, true);
 
       // Check if response is ok first
       if (!response.ok) {
@@ -822,11 +850,12 @@ function App() {
 
       console.log('解析结果:', result);
 
-      if (result.success) {
-        newTableData[idx].lastSendResult = '发码成功: ' + result.message;
-        newTableData[idx].sendCooldown = config.sendParseRule.cooldownTime || 120;
+      // 根据成功状态决定是否进入冷却：只有成功时才启动120秒冷却
+      if (result.success === true) {
+        newTableData[idx].lastSendResult = '✅ 发码成功: ' + result.message;
 
-        // Start cooldown timer
+        // 只有成功时才设置120秒冷却
+        newTableData[idx].sendCooldown = 120;
         newTableData[idx].sendTimer = setInterval(() => {
           newTableData[idx].sendCooldown--;
           if (newTableData[idx].sendCooldown <= 0) {
@@ -838,9 +867,14 @@ function App() {
           }
           setTableData([...newTableData]);
         }, 1000);
+
+      } else if (result.success === 'rate_limit') {
+        newTableData[idx].lastSendResult = '⏱️ 频率限制: ' + result.message;
+        // 频率限制不设置冷却，用户可以选择稍后手动重试
+
       } else {
-        newTableData[idx].lastSendResult = '发码失败: ' + result.message;
-        console.warn('发码失败:', result.message);
+        newTableData[idx].lastSendResult = '❌ 发码失败: ' + result.message;
+        // 失败不设置冷却，用户可以立即重试
       }
 
       setTableData([...newTableData]);
@@ -873,6 +907,8 @@ function App() {
       }
 
       newTableData[idx].lastSendResult = userFriendlyMessage;
+
+      // 网络错误不设置冷却，用户可以立即重试
       setTableData([...newTableData]);
     }
   };
@@ -1211,21 +1247,33 @@ function App() {
         {lastSendResult && (
           <div className="mt-3 pt-3 border-t border-gray-200">
             <div className="flex items-center gap-2 mb-1">
-              {lastSendResult.includes('失败') || lastSendResult.includes('错误') ? (
+              {lastSendResult.includes('❌') || lastSendResult.includes('错误') ? (
                 <AlertTriangle className="w-4 h-4 text-red-600" />
+              ) : lastSendResult.includes('⏱️') ? (
+                <Clock className="w-4 h-4 text-orange-600" />
+              ) : lastSendResult.includes('✨') ? (
+                <Activity className="w-4 h-4 text-purple-600" />
               ) : (
                 <CheckCircle className="w-4 h-4 text-green-600" />
               )}
-              <span className={`text-xs font-medium ${lastSendResult.includes('失败') || lastSendResult.includes('错误')
+              <span className={`text-xs font-medium ${lastSendResult.includes('❌') || lastSendResult.includes('错误')
                 ? 'text-red-700'
-                : 'text-green-700'
+                : lastSendResult.includes('⏱️')
+                  ? 'text-orange-700'
+                  : lastSendResult.includes('✨')
+                    ? 'text-purple-700'
+                    : 'text-green-700'
                 }`}>
                 发码结果
               </span>
             </div>
-            <div className={`text-xs ${lastSendResult.includes('失败') || lastSendResult.includes('错误')
+            <div className={`text-xs ${lastSendResult.includes('❌') || lastSendResult.includes('错误')
               ? 'text-red-800'
-              : 'text-green-800'
+              : lastSendResult.includes('⏱️')
+                ? 'text-orange-800'
+                : lastSendResult.includes('✨')
+                  ? 'text-purple-800'
+                  : 'text-green-800'
               }`}>
               {lastSendResult}
             </div>
