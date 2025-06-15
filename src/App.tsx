@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Download, Settings, Send, RefreshCw, Check, Eye, EyeOff, Plus, Trash2, Edit3, TestTube, ChevronDown, ChevronUp, Copy, MessageSquare, Clock, CheckCircle, AlertTriangle, Activity } from 'lucide-react';
+import { Upload, Download, Settings, Send, RefreshCw, Check, Eye, EyeOff, Plus, Trash2, ChevronDown, ChevronUp, Copy, MessageSquare, Clock, CheckCircle, AlertTriangle, Activity } from 'lucide-react';
 
 interface TableRow {
   index: number;
@@ -61,7 +61,6 @@ function App() {
   const [apiStatus, setApiStatus] = useState<{ [key: string]: 'checking' | 'online' | 'offline' | 'unknown' }>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const configInputRef = useRef<HTMLInputElement>(null);
 
   // 统一的环境检测函数
   const isProductionEnvironment = () => {
@@ -82,11 +81,11 @@ function App() {
       const customDenoProxy = 'https://cors.elfs.pp.ua/proxy?url=';
 
       // 更新的备用CORS代理服务列表（移除易被阻止的服务）
-      const backupProxies = [
-        'https://corsproxy.io/?',
-        'https://cors-anywhere.herokuapp.com/',
-        'https://api.codetabs.com/v1/proxy?quest='
-      ];
+      // const backupProxies = [
+      //   'https://corsproxy.io/?',
+      //   'https://cors-anywhere.herokuapp.com/',
+      //   'https://api.codetabs.com/v1/proxy?quest='
+      // ];
 
       // 优先使用您的自定义Deno代理
       return customDenoProxy + encodeURIComponent(originalUrl);
@@ -374,8 +373,8 @@ function App() {
   const parseData = () => {
     const text = inputText.trim();
     const lines = text.split('\n').filter(line => line.trim());
-    let existPhones = new Set(tableData.filter(d => d.status === '已使用').map(d => d.phone));
-    let newData: TableRow[] = [];
+    const existPhones = new Set(tableData.filter(d => d.status === '已使用').map(d => d.phone));
+    const newData: TableRow[] = [];
 
     lines.forEach(line => {
       let matched = false;
@@ -387,7 +386,7 @@ function App() {
         const sendApi = fourUrlMatch[2];
         const receiveApi = fourUrlMatch[3];
 
-        let matchedConfig = apiConfigs.find(config => config.urlPattern.test(receiveApi)) || apiConfigs[0];
+        const matchedConfig = apiConfigs.find(config => config.urlPattern.test(receiveApi)) || apiConfigs[0];
 
         if (!existPhones.has(phone)) {
           newData.push({
@@ -410,8 +409,8 @@ function App() {
       }
 
       if (!matched) {
-        for (let config of apiConfigs) {
-          for (let pattern of config.inputPatterns) {
+        for (const config of apiConfigs) {
+          for (const pattern of config.inputPatterns) {
             const match = line.match(pattern);
             if (match) {
               const phone = match[1];
@@ -443,7 +442,7 @@ function App() {
       }
     });
 
-    let existingUsedData = tableData.filter(d => d.status === '已使用').map(d => ({
+    const existingUsedData = tableData.filter(d => d.status === '已使用').map(d => ({
       ...d,
       importedAsUsed: true,
       isExpanded: false
@@ -694,7 +693,7 @@ function App() {
     reader.onload = (e) => {
       const text = e.target?.result as string;
       const lines = text.split('\n').filter(line => line.trim());
-      let newData: TableRow[] = [];
+      const newData: TableRow[] = [];
 
       lines.forEach((line, idx) => {
         if (idx === 0 && line.includes('手机号')) return;
@@ -720,7 +719,7 @@ function App() {
         if (status === '已完成') status = '已使用';
 
         if (phone && api && phone.match(/^\d{10,}$/)) {
-          let matchedConfig = apiConfigs.find(config => config.urlPattern.test(api)) || apiConfigs[0];
+          const matchedConfig = apiConfigs.find(config => config.urlPattern.test(api)) || apiConfigs[0];
 
           newData.push({
             index: 0, // 临时设置为0，稍后重新排序
