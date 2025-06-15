@@ -9,10 +9,10 @@ interface TableRow {
   apiConfig: APIConfig;
   status: string;
   countdown: number;
-  timer: NodeJS.Timeout | null;
+  timer: number | null;
   sms: string;
   sendCooldown: number;
-  sendTimer: NodeJS.Timeout | null;
+  sendTimer: number | null;
   lastSendTime: number;
   hasSent?: boolean;
   importedAsUsed?: boolean;
@@ -77,10 +77,10 @@ function App() {
     const isProduction = isProductionEnvironment();
 
     if (isProduction) {
-      // 生产环境：优先使用您的自定义Deno CORS代理
-      const customDenoProxy = 'https://cors.elfs.pp.ua/proxy?url=';
-
-      return customDenoProxy + encodeURIComponent(originalUrl);
+      // 生产环境：使用可靠的CORS代理服务
+      // 优先使用 allorigins.win（免费且稳定）
+      const primaryProxy = 'https://api.allorigins.win/raw?url=';
+      return primaryProxy + encodeURIComponent(originalUrl);
     } else {
       // 开发环境：使用Vite代理配置
       if (originalUrl.includes('csfaka.cn')) {
@@ -100,8 +100,9 @@ function App() {
 
     // 备用代理服务列表，只在主代理失败时使用
     const corsProxies = [
-      'https://corsproxy.io/?',
-      'https://cors-anywhere.herokuapp.com/'
+      'https://cors-proxy.htmldriven.com/?url=',
+      'https://thingproxy.freeboard.io/fetch/',
+      'https://api.codetabs.com/v1/proxy?quest='
     ];
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -113,18 +114,27 @@ function App() {
         let originalUrl = url;
 
         // 检查是否已经是代理URL，如果是则提取原始URL
-        if (url.includes('cors.elfs.pp.ua/proxy?url=')) {
+        if (url.includes('api.allorigins.win/raw?url=')) {
           originalUrl = decodeURIComponent(url.split('url=')[1]);
-        } else if (url.includes('corsproxy.io/?')) {
-          originalUrl = decodeURIComponent(url.replace('https://corsproxy.io/?', ''));
-        } else if (url.includes('cors-anywhere.herokuapp.com/')) {
-          originalUrl = url.replace('https://cors-anywhere.herokuapp.com/', '');
+        } else if (url.includes('cors-proxy.htmldriven.com/?url=')) {
+          originalUrl = decodeURIComponent(url.split('url=')[1]);
+        } else if (url.includes('thingproxy.freeboard.io/fetch/')) {
+          originalUrl = url.replace('https://thingproxy.freeboard.io/fetch/', '');
+        } else if (url.includes('api.codetabs.com/v1/proxy?quest=')) {
+          originalUrl = decodeURIComponent(url.split('quest=')[1]);
         }
 
-        // 尝试备用代理（不包括您的主代理，避免重复）
+        // 尝试备用代理
         const proxyIndex = (attempt - 1) % corsProxies.length;
-        currentUrl = corsProxies[proxyIndex] + encodeURIComponent(originalUrl);
-        console.log(`主代理失败，尝试备用代理 ${proxyIndex + 1}: ${corsProxies[proxyIndex]}`);
+        const selectedProxy = corsProxies[proxyIndex];
+
+        if (selectedProxy.includes('quest=')) {
+          currentUrl = selectedProxy + encodeURIComponent(originalUrl);
+        } else {
+          currentUrl = selectedProxy + encodeURIComponent(originalUrl);
+        }
+
+        console.log(`主代理失败，尝试备用代理 ${proxyIndex + 1}: ${selectedProxy}`);
       }
 
       try {
@@ -617,21 +627,21 @@ function App() {
 
       let userFriendlyMessage = '';
 
-      // 简化错误处理，提供更清晰的用户反馈
+      // 改进错误处理，提供更清晰的用户反馈
       if (errorMessage.includes('AbortError') || errorMessage.includes('timeout')) {
-        userFriendlyMessage = `请求超时: 网络连接不稳定或代理服务响应慢，请稍后重试`;
+        userFriendlyMessage = `⏰ 请求超时: 网络连接不稳定，已自动重试多个代理服务，请稍后再试`;
       } else if (errorMessage.includes('CORS') || errorMessage.includes('blocked')) {
-        userFriendlyMessage = `跨域请求被阻止: 代理服务可能不可用，正在自动切换到备用代理`;
+        userFriendlyMessage = `🚫 跨域请求被阻止: 所有代理服务暂时不可用，请稍后重试`;
       } else if (errorMessage.includes('404')) {
-        userFriendlyMessage = `API端点未找到: 请检查API地址是否正确`;
+        userFriendlyMessage = `❌ API端点未找到: 请检查API地址是否正确`;
       } else if (errorMessage.includes('429')) {
-        userFriendlyMessage = `请求频率过高: 请等待一段时间后重试`;
+        userFriendlyMessage = `⚠️ 请求频率过高: 请等待一段时间后重试`;
       } else if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503')) {
-        userFriendlyMessage = `服务器错误: API服务暂时不可用，请稍后重试`;
-      } else if (errorMessage.includes('代理')) {
-        userFriendlyMessage = `代理服务错误: ${errorMessage}`;
+        userFriendlyMessage = `🔧 服务器错误: API服务暂时不可用，请稍后重试`;
+      } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+        userFriendlyMessage = `🌐 网络连接失败: 请检查网络连接或稍后重试`;
       } else {
-        userFriendlyMessage = `发码请求失败: ${errorMessage}`;
+        userFriendlyMessage = `❌ 发码请求失败: ${errorMessage}`;
       }
 
       newTableData[idx].lastSendResult = userFriendlyMessage;
@@ -765,8 +775,8 @@ function App() {
         };
       } else {
         parseRule = {
-          success: (text: string) => text && !text.includes(noSms),
-          extractSms: (text: string) => text,
+          success: (text: any) => Boolean(text && !text.includes(noSms)),
+          extractSms: (text: any) => String(text),
           noSmsMessage: noSms
         };
       }
