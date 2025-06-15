@@ -81,11 +81,11 @@ function App() {
       // 生产环境：优先使用您的自定义Deno CORS代理
       const customDenoProxy = 'https://cors.elfs.pp.ua/proxy?url=';
 
-      // 备用CORS代理服务列表
+      // 更新的备用CORS代理服务列表（移除易被阻止的服务）
       const backupProxies = [
-        'https://api.allorigins.win/raw?url=',
         'https://corsproxy.io/?',
-        'https://cors-anywhere.herokuapp.com/'
+        'https://cors-anywhere.herokuapp.com/',
+        'https://api.codetabs.com/v1/proxy?quest='
       ];
 
       // 优先使用您的自定义Deno代理
@@ -107,11 +107,11 @@ function App() {
     let lastError: Error;
     const isProduction = isProductionEnvironment();
 
-    // CORS代理服务列表（按可靠性排序）
+    // 更新的CORS代理服务列表（移除api.allorigins.win）
     const corsProxies = [
       'https://cors.elfs.pp.ua/proxy?url=',
-      'https://api.allorigins.win/raw?url=',
       'https://corsproxy.io/?',
+      'https://api.codetabs.com/v1/proxy?quest=',
       'https://cors-anywhere.herokuapp.com/'
     ];
 
@@ -137,7 +137,8 @@ function App() {
 
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+        // 减少超时时间从30秒到10秒，加快故障转移
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
 
         const response = await fetch(currentUrl, {
           ...options,
@@ -158,14 +159,14 @@ function App() {
           // 速率限制，等待更长时间后重试
           console.warn(`速率限制 (429)，等待后重试...`);
           if (attempt < maxRetries) {
-            await new Promise(resolve => setTimeout(resolve, 5000 * (attempt + 1)));
+            await new Promise(resolve => setTimeout(resolve, 3000 * (attempt + 1)));
             continue;
           }
         } else if (response.status >= 500) {
           // 服务器错误，可以重试
           console.warn(`服务器错误 (${response.status})，准备重试...`);
           if (attempt < maxRetries) {
-            await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1)));
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
             continue;
           }
         }
@@ -177,15 +178,16 @@ function App() {
         lastError = error as Error;
         console.warn(`尝试 ${attempt + 1} 失败:`, error);
 
-        // 如果是网络错误且在生产环境，尝试备用代理
+        // 如果是网络错误且在生产环境，立即尝试备用代理
         if (isProduction && attempt < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          // 减少等待时间，加快代理切换
+          await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
           continue;
         }
 
         // 如果不是最后一次尝试，等待后重试
         if (attempt < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1))); // Progressive delay
+          await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1))); // 减少延迟时间
         }
       }
     }
@@ -270,7 +272,7 @@ function App() {
         sendUrlPattern: /https:\/\/csfaka\.cn\/api\/Sms\/sendSms\?key=([a-zA-Z0-9]+)/,
         sendResponseType: 'json',
         sendParseRule: {
-          success: (data) => {
+          success: (data: any) => {
             // 根据实际API响应格式调整判断逻辑
             // status 200 = 成功, status 201 = 频率限制但请求有效
             if (data.status === 200) {
@@ -280,7 +282,7 @@ function App() {
             }
             return false;
           },
-          extractMessage: (data) => {
+          extractMessage: (data: any) => {
             // 优先使用msg字段
             if (data.msg) {
               return data.msg;
@@ -297,7 +299,7 @@ function App() {
             return '发送完成';
           },
           cooldownTime: 120,
-          getEndTime: (data) => data.end_time || null
+          getEndTime: (data: any) => data.end_time || null
         }
       }
     ];
@@ -625,16 +627,18 @@ function App() {
       let userFriendlyMessage = '';
 
       // 根据错误类型提供具体的故障排除建议
-      if (errorMessage.includes('fetch') || errorMessage.includes('network')) {
+      if (errorMessage.includes('fetch') || errorMessage.includes('network') || errorMessage.includes('AbortError')) {
         if (isProduction) {
-          userFriendlyMessage = `网络连接失败: ${errorMessage}。\n\n可能的解决方案:\n1. 检查网络连接\n2. CORS代理服务可能暂时不可用，请稍后重试\n3. 尝试刷新页面重新加载`;
+          userFriendlyMessage = `网络连接失败: ${errorMessage}。\n\n可能的解决方案:\n1. 检查网络连接\n2. CORS代理服务可能暂时不可用，请稍后重试\n3. 尝试刷新页面重新加载\n4. 如果问题持续，可能是广告拦截器影响，请尝试暂时禁用`;
         } else {
           userFriendlyMessage = `网络连接失败: ${errorMessage}。请检查开发服务器代理配置或API服务状态。`;
         }
-      } else if (errorMessage.includes('CORS')) {
-        userFriendlyMessage = `跨域请求被阻止: ${errorMessage}。\n\n这通常发生在:\n1. CORS代理服务不可用\n2. 浏览器安全策略限制\n3. API服务不支持跨域请求`;
+      } else if (errorMessage.includes('CORS') || errorMessage.includes('blocked')) {
+        userFriendlyMessage = `跨域请求被阻止: ${errorMessage}。\n\n这通常发生在:\n1. CORS代理服务不可用\n2. 浏览器安全策略或广告拦截器限制\n3. API服务不支持跨域请求\n\n建议:\n- 尝试禁用广告拦截器\n- 刷新页面重试\n- 检查浏览器控制台是否有其他错误信息`;
       } else if (errorMessage.includes('429')) {
         userFriendlyMessage = `请求频率过高: 已达到API调用限制。请等待一段时间后重试。`;
+      } else if (errorMessage.includes('408') || errorMessage.includes('timeout')) {
+        userFriendlyMessage = `请求超时: ${errorMessage}。\n\n解决方案:\n1. 检查网络连接稳定性\n2. 稍后重试，代理服务可能暂时过载\n3. 如果问题持续，请联系管理员`;
       } else if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503')) {
         userFriendlyMessage = `服务器错误: ${errorMessage}。API服务暂时不可用，请稍后重试。`;
       } else if (errorMessage.includes('404')) {
