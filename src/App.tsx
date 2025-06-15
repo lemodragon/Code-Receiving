@@ -77,6 +77,16 @@ function App() {
 
   // Helper function to convert external URL to proxy URL
   const getProxyUrl = (originalUrl: string, isSendSmsRequest = false) => {
+    // 检查是否已经是代理URL，避免双重包装
+    if (originalUrl.includes('allorigins.win') ||
+      originalUrl.includes('cors.elfs.pp.ua') ||
+      originalUrl.includes('corsproxy.io') ||
+      originalUrl.includes('cors-proxy.htmldriven.com') ||
+      originalUrl.includes('thingproxy.freeboard.io')) {
+      console.log('🔍 检测到已是代理URL，直接返回:', originalUrl.substring(0, 80) + '...');
+      return originalUrl;
+    }
+
     // 检测是否为生产环境（GitHub Pages、Netlify或其他静态托管）
     const isProduction = isProductionEnvironment();
 
@@ -179,8 +189,8 @@ function App() {
     if (isSendSmsRequest && customProxy && isProduction) {
       console.log('发码请求将优先使用自定义代理:', customProxy);
 
-      // 对自定义代理进行多次重试（最多3次）
-      for (let customAttempt = 0; customAttempt < 3; customAttempt++) {
+      // 对自定义代理进行重试（最多2次，减少不必要的重试）
+      for (let customAttempt = 0; customAttempt < 2; customAttempt++) {
         try {
           let proxyUrl = url;
 
@@ -199,7 +209,7 @@ function App() {
             proxyUrl = customProxy + originalUrl;
           }
 
-          console.log(`自定义代理尝试 ${customAttempt + 1}/3:`, {
+          console.log(`自定义代理尝试 ${customAttempt + 1}/2:`, {
             原始URL: originalUrl.substring(0, 50) + '...',
             代理URL: proxyUrl.substring(0, 50) + '...',
             代理服务: customProxy
@@ -229,19 +239,19 @@ function App() {
             break; // 403错误直接跳出自定义代理重试
           } else if (response.status === 429) {
             console.warn('⚠️ 自定义代理速率限制，等待后重试');
-            if (customAttempt < 2) {
+            if (customAttempt < 1) {
               await new Promise(resolve => setTimeout(resolve, 2000 * (customAttempt + 1)));
             }
           } else {
             console.warn(`⚠️ 自定义代理返回 ${response.status}，继续重试`);
-            if (customAttempt < 2) {
+            if (customAttempt < 1) {
               await new Promise(resolve => setTimeout(resolve, 1000 * (customAttempt + 1)));
             }
           }
 
         } catch (error) {
           console.warn(`自定义代理尝试 ${customAttempt + 1} 失败:`, error);
-          if (customAttempt < 2) {
+          if (customAttempt < 1) {
             await new Promise(resolve => setTimeout(resolve, 1000 * (customAttempt + 1)));
           }
         }
@@ -713,8 +723,8 @@ function App() {
   };
 
   const fetchSms = async (apiUrl: string, config: APIConfig) => {
-    const proxyUrl = getProxyUrl(apiUrl);
-    const response = await fetchWithRetry(proxyUrl);
+    // 直接传递原始URL给fetchWithRetry，让它内部处理代理逻辑，避免双重代理
+    const response = await fetchWithRetry(apiUrl);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);

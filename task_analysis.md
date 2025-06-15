@@ -263,3 +263,18 @@ const sendSms = (idx: number): Promise<void>
 - **构建状态**: ✅ 成功构建 (npm run build:netlify)
 - **阻碍**: 无
 - **状态**: 待用户确认 
+
+### 步骤 11-13: 双重代理和重试优化完成
+- **修改**: `src/App.tsx`
+- **更改摘要**: 
+  1. ✅ 修复fetchSms函数双重代理问题，直接传递原始URL给fetchWithRetry
+  2. ✅ 减少自定义代理重试次数从3次降至2次，提高响应速度
+  3. ✅ 在getProxyUrl中添加代理URL检测，避免对已是代理的URL再次包装
+  4. ✅ 解决接收短信请求的代理嵌套问题（allorigins套allorigins）
+- **原因**: 修复用户反馈的多次请求问题和代理嵌套问题
+- **技术细节**: 
+  - 问题根源：fetchSms调用getProxyUrl预包装，然后fetchWithRetry再次包装
+  - 解决方案：fetchSms直接传递原始URL，由fetchWithRetry统一处理代理
+- **构建状态**: ✅ 成功构建 (npm run build:netlify)
+- **阻碍**: 无
+- **状态**: 待用户确认 
