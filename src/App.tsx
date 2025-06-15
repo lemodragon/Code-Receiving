@@ -135,14 +135,26 @@ function App() {
         });
         return fallbackProxy;
       } else {
-        // 普通GET请求可以继续使用allorigins.win
-        const primaryProxy = 'https://api.allorigins.win/raw?url=';
-        const proxyUrl = primaryProxy + encodeURIComponent(originalUrl);
-        console.log('✅ 使用allorigins代理处理普通请求:', {
-          原始URL: originalUrl,
-          代理URL: proxyUrl.substring(0, 80) + '...'
-        });
-        return proxyUrl;
+        // 普通GET请求（包括接收短信）- 如果有自定义代理也可以使用
+        if (customProxy && originalUrl.includes('csfaka.cn')) {
+          // 接收短信请求如果配置了自定义代理，也优先使用
+          const proxyUrl = customProxy + encodeURIComponent(originalUrl);
+          console.log('✅ 接收短信请求使用自定义代理:', {
+            原始URL: originalUrl,
+            代理URL: proxyUrl.substring(0, 80) + '...',
+            代理服务: customProxy.includes('cors.elfs.pp.ua') ? 'Deno代理' : '其他自定义代理'
+          });
+          return proxyUrl;
+        } else {
+          // 使用allorigins作为默认代理，但不强制只用它
+          const primaryProxy = 'https://api.allorigins.win/raw?url=';
+          const proxyUrl = primaryProxy + encodeURIComponent(originalUrl);
+          console.log('✅ 使用allorigins代理处理普通请求:', {
+            原始URL: originalUrl,
+            代理URL: proxyUrl.substring(0, 80) + '...'
+          });
+          return proxyUrl;
+        }
       }
     } else {
       // 开发环境：使用Vite代理配置
@@ -185,81 +197,6 @@ function App() {
       'https://api.codetabs.com/v1/proxy?quest='
     ];
 
-    // 对于发码请求，如果有自定义代理则优先使用且多次重试
-    if (isSendSmsRequest && customProxy && isProduction) {
-      console.log('发码请求将优先使用自定义代理:', customProxy);
-
-      // 对自定义代理进行重试（最多2次，减少不必要的重试）
-      for (let customAttempt = 0; customAttempt < 2; customAttempt++) {
-        try {
-          let proxyUrl = url;
-
-          // 提取原始URL（如果已经是代理URL）
-          let originalUrl = url;
-          if (url.includes('proxy?url=')) {
-            originalUrl = decodeURIComponent(url.split('proxy?url=')[1]);
-          }
-
-          // 构建自定义代理URL
-          if (customProxy.includes('proxy?url=')) {
-            proxyUrl = customProxy + encodeURIComponent(originalUrl);
-          } else if (customProxy.endsWith('/')) {
-            proxyUrl = customProxy + originalUrl;
-          } else {
-            proxyUrl = customProxy + originalUrl;
-          }
-
-          console.log(`自定义代理尝试 ${customAttempt + 1}/2:`, {
-            原始URL: originalUrl.substring(0, 50) + '...',
-            代理URL: proxyUrl.substring(0, 50) + '...',
-            代理服务: customProxy
-          });
-
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-          const response = await fetch(proxyUrl, {
-            ...options,
-            signal: controller.signal,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              ...options.headers
-            }
-          });
-
-          clearTimeout(timeoutId);
-
-          console.log(`自定义代理响应 ${customAttempt + 1}: ${response.status} ${response.statusText}`);
-
-          if (response.ok) {
-            console.log('✅ 自定义代理请求成功，跳过备用代理');
-            return response;
-          } else if (response.status === 403) {
-            console.warn('❌ 自定义代理返回403，跳过后续重试');
-            break; // 403错误直接跳出自定义代理重试
-          } else if (response.status === 429) {
-            console.warn('⚠️ 自定义代理速率限制，等待后重试');
-            if (customAttempt < 1) {
-              await new Promise(resolve => setTimeout(resolve, 2000 * (customAttempt + 1)));
-            }
-          } else {
-            console.warn(`⚠️ 自定义代理返回 ${response.status}，继续重试`);
-            if (customAttempt < 1) {
-              await new Promise(resolve => setTimeout(resolve, 1000 * (customAttempt + 1)));
-            }
-          }
-
-        } catch (error) {
-          console.warn(`自定义代理尝试 ${customAttempt + 1} 失败:`, error);
-          if (customAttempt < 1) {
-            await new Promise(resolve => setTimeout(resolve, 1000 * (customAttempt + 1)));
-          }
-        }
-      }
-
-      console.log('⚠️ 自定义代理所有尝试均失败，将使用备用代理');
-    }
-
     console.log('fetchWithRetry 开始处理:', {
       url: url.substring(0, 50) + '...',
       isSendSmsRequest,
@@ -300,9 +237,20 @@ function App() {
             originalUrl = decodeURIComponent(url.split('proxy?url=')[1]);
           }
 
+          // 为发码请求在备用代理列表前加上自定义代理
+          // 为接收短信请求也添加自定义代理支持（如果配置了）
+          let allProxies = [...corsProxies];
+          if (isSendSmsRequest && customProxy) {
+            allProxies = [customProxy, ...corsProxies];
+          } else if (!isSendSmsRequest && customProxy && originalUrl.includes('csfaka.cn')) {
+            // 接收短信请求也可以使用自定义代理作为备用选项
+            allProxies = [customProxy, ...corsProxies];
+            console.log('📱 接收短信请求启用自定义代理备用重试:', customProxy);
+          }
+
           // 尝试备用代理
-          const proxyIndex = (attempt - 1) % corsProxies.length;
-          const selectedProxy = corsProxies[proxyIndex];
+          const proxyIndex = (attempt - 1) % allProxies.length;
+          const selectedProxy = allProxies[proxyIndex];
 
           // 检查originalUrl是否已经包含协议，如果没有则添加https://
           if (!originalUrl.startsWith('http')) {
