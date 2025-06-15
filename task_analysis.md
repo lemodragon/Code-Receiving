@@ -249,4 +249,17 @@ const sendSms = (idx: number): Promise<void>
 - **原因**: 修复用户报告的CORS代理403错误问题
 - **构建状态**: ✅ 成功构建 (npm run build:netlify)
 - **阻碍**: 无
+- **状态**: 待用户确认
+
+### 步骤 7-10: 发码请求识别和UI修复完成
+- **修改**: `src/App.tsx`
+- **更改摘要**: 
+  1. ✅ 从代理设置UI中移除cors-anywhere.herokuapp.com可点击选项，改为显示"已失效"状态
+  2. ✅ 修复sendSms函数中的发码请求识别问题，明确传递isSendSmsRequest=true参数
+  3. ✅ 优化fetchWithRetry函数签名，支持明确的发码请求标识
+  4. ✅ 改进自定义代理重试逻辑，成功时跳过备用代理，减少不必要的重试
+  5. ✅ 增强错误状态处理，对429速率限制错误增加更长等待时间
+- **原因**: 修复用户反馈的发码请求识别问题和UI显示问题
+- **构建状态**: ✅ 成功构建 (npm run build:netlify)
+- **阻碍**: 无
 - **状态**: 待用户确认 

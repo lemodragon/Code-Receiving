@@ -158,12 +158,14 @@ function App() {
   };
 
   // Enhanced fetch function with retry logic and better error handling
-  const fetchWithRetry = async (url: string, options: RequestInit = {}, maxRetries = 2): Promise<Response> => {
+  const fetchWithRetry = async (url: string, options: RequestInit = {}, maxRetries = 2, isSendSmsRequest = false): Promise<Response> => {
     let lastError: Error;
     const isProduction = isProductionEnvironment();
 
-    // 检查是否是发码请求（可能需要预检请求）
-    const isSendSmsRequest = url.includes('/sendSms');
+    // 如果没有明确指定，则通过URL检查是否是发码请求
+    if (!isSendSmsRequest) {
+      isSendSmsRequest = url.includes('/sendSms');
+    }
 
     // 过滤掉已知失效的代理服务，移除cors-anywhere.herokuapp.com
     const corsProxies = [
@@ -220,17 +222,21 @@ function App() {
           console.log(`自定义代理响应 ${customAttempt + 1}: ${response.status} ${response.statusText}`);
 
           if (response.ok) {
-            console.log('✅ 自定义代理请求成功');
+            console.log('✅ 自定义代理请求成功，跳过备用代理');
             return response;
           } else if (response.status === 403) {
             console.warn('❌ 自定义代理返回403，跳过后续重试');
             break; // 403错误直接跳出自定义代理重试
-          }
-
-          // 其他错误状态继续重试
-          if (customAttempt < 2) {
-            console.log(`自定义代理重试等待 ${1000 * (customAttempt + 1)}ms...`);
-            await new Promise(resolve => setTimeout(resolve, 1000 * (customAttempt + 1)));
+          } else if (response.status === 429) {
+            console.warn('⚠️ 自定义代理速率限制，等待后重试');
+            if (customAttempt < 2) {
+              await new Promise(resolve => setTimeout(resolve, 2000 * (customAttempt + 1)));
+            }
+          } else {
+            console.warn(`⚠️ 自定义代理返回 ${response.status}，继续重试`);
+            if (customAttempt < 2) {
+              await new Promise(resolve => setTimeout(resolve, 1000 * (customAttempt + 1)));
+            }
           }
 
         } catch (error) {
@@ -818,8 +824,8 @@ function App() {
       // 发码请求直接传递原始URL给fetchWithRetry，让它内部处理代理逻辑
       console.log('发送发码请求到:', row.sendApi);
 
-      // 发码请求是简单的GET请求，不需要特殊请求头
-      const response = await fetchWithRetry(row.sendApi);
+      // 明确标识这是发码请求，确保使用自定义代理重试逻辑
+      const response = await fetchWithRetry(row.sendApi, {}, 2, true);
 
       // Check if response is ok first
       if (!response.ok) {
@@ -1485,13 +1491,11 @@ function App() {
                       https://corsproxy.io/? (corsproxy.io)
                     </button>
                   </li>
-                  <li>
-                    <button
-                      onClick={() => setCustomProxy('https://cors-anywhere.herokuapp.com/')}
-                      className="text-blue-600 hover:text-blue-800 text-sm"
-                    >
-                      https://cors-anywhere.herokuapp.com/ (cors-anywhere)
-                    </button>
+                  <li className="opacity-50">
+                    <span className="text-gray-500 text-sm line-through">
+                      https://cors-anywhere.herokuapp.com/ (已失效)
+                    </span>
+                    <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full ml-2">不可用</span>
                   </li>
                 </ul>
               </div>
