@@ -14,7 +14,8 @@ const httpsAgent = new https.Agent({
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: process.env.NODE_ENV === 'production' ? '/Code-Receiving/' : '/',
+  // 兼容多平台部署：GitHub Pages需要仓库名前缀，Netlify使用根路径
+  base: process.env.VITE_DEPLOY_TARGET === 'github' ? '/Code-Receiving/' : '/',
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
