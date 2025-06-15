@@ -96,7 +96,17 @@ function App() {
       // 优先使用用户的自定义代理，特别是对于发码请求
       if (isSendSmsRequest || originalUrl.includes('/sendSms')) {
         // 发码请求使用自定义代理
-        const proxyUrl = customProxy + originalUrl;
+        let proxyUrl;
+        if (customProxy.includes('proxy?url=')) {
+          // Deno代理格式：https://cors.elfs.pp.ua/proxy?url=
+          proxyUrl = customProxy + encodeURIComponent(originalUrl);
+        } else if (customProxy.endsWith('/')) {
+          // 其他代理格式
+          proxyUrl = customProxy + originalUrl;
+        } else {
+          // 其他格式代理
+          proxyUrl = customProxy + originalUrl;
+        }
         console.log('使用自定义代理处理发码请求:', {
           原始URL: originalUrl,
           代理URL: proxyUrl,
@@ -146,7 +156,7 @@ function App() {
 
     // 备用代理服务列表，只在主代理失败时使用
     const corsProxies = [
-      'https://cors.cute.pp.ua/',  // 用户的Deno代理，最可靠
+      'https://cors.elfs.pp.ua/proxy?url=',  // 用户的新Deno代理，最可靠
       'https://corsproxy.io/?',
       'https://cors-anywhere.herokuapp.com/',
       'https://cors-proxy.htmldriven.com/?url=',
@@ -155,11 +165,11 @@ function App() {
     ];
 
     // 如果是发码请求，确保Deno代理优先使用
-    if (isSendSmsRequest && !url.includes('cors.cute.pp.ua')) {
+    if (isSendSmsRequest && !url.includes('cors.elfs.pp.ua')) {
       // 确保Deno代理在列表最前面
       corsProxies.sort((a, b) => {
-        if (a.includes('cors.cute.pp.ua')) return -1;
-        if (b.includes('cors.cute.pp.ua')) return 1;
+        if (a.includes('cors.elfs.pp.ua')) return -1;
+        if (b.includes('cors.elfs.pp.ua')) return 1;
         return 0;
       });
     }
@@ -185,9 +195,9 @@ function App() {
           originalUrl = decodeURIComponent(url.split('corsproxy.io/?')[1]);
         } else if (url.includes('cors-anywhere.herokuapp.com/')) {
           originalUrl = url.replace('https://cors-anywhere.herokuapp.com/', '');
-        } else if (url.includes('cors.cute.pp.ua/')) {
-          // 处理用户的Deno代理
-          originalUrl = url.replace('https://cors.cute.pp.ua/', '');
+        } else if (url.includes('cors.elfs.pp.ua/proxy?url=')) {
+          // 处理Deno代理格式
+          originalUrl = decodeURIComponent(url.split('proxy?url=')[1]);
         }
 
         // 尝试备用代理
@@ -203,6 +213,9 @@ function App() {
         if (selectedProxy.includes('quest=')) {
           currentUrl = selectedProxy + encodeURIComponent(originalUrl);
         } else if (selectedProxy.includes('url=')) {
+          currentUrl = selectedProxy + encodeURIComponent(originalUrl);
+        } else if (selectedProxy.includes('proxy?url=')) {
+          // 新的Deno代理格式
           currentUrl = selectedProxy + encodeURIComponent(originalUrl);
         } else {
           // 对于直接拼接的代理，如cors-anywhere
@@ -341,7 +354,7 @@ function App() {
             原始URL: sendSmsApi,
             代理URL: proxyUrl,
             使用代理: proxyUrl !== sendSmsApi,
-            代理服务: proxyUrl.includes('cors.cute.pp.ua') ? 'Deno代理' :
+            代理服务: proxyUrl.includes('cors.elfs.pp.ua') ? 'Deno代理' :
               proxyUrl.includes('corsproxy.io') ? 'corsproxy.io' :
                 proxyUrl.includes('allorigins.win') ? 'allorigins.win' : '其他代理'
           });
@@ -431,13 +444,13 @@ function App() {
         setCustomProxy(savedProxy);
         console.log('已加载自定义代理:', savedProxy);
       } else {
-        // 默认使用Deno代理
-        setCustomProxy('https://cors.cute.pp.ua/');
-        console.log('使用默认Deno代理: https://cors.cute.pp.ua/');
+        // 默认使用新的Deno代理
+        setCustomProxy('https://cors.elfs.pp.ua/proxy?url=');
+        console.log('使用默认Deno代理: https://cors.elfs.pp.ua/proxy?url=');
       }
     } catch (error) {
       console.error('加载代理配置失败:', error);
-      setCustomProxy('https://cors.cute.pp.ua/');
+      setCustomProxy('https://cors.elfs.pp.ua/proxy?url=');
     }
   }, []);
 
@@ -1289,7 +1302,7 @@ function App() {
                     type="text"
                     value={customProxy}
                     onChange={(e) => setCustomProxy(e.target.value)}
-                    placeholder="例如: https://cors.cute.pp.ua/"
+                    placeholder="例如: https://cors.elfs.pp.ua/proxy?url="
                     className="flex-1 p-3 border-2 border-gray-200 rounded-xl focus:border-purple-400 focus:ring-4 focus:ring-purple-100 transition-all duration-300"
                   />
                   <button
@@ -1300,7 +1313,7 @@ function App() {
                   </button>
                 </div>
                 <p className="mt-2 text-sm text-gray-500">
-                  注意: 代理URL必须以 http:// 或 https:// 开头，并以 / 结尾。例如: https://cors.cute.pp.ua/
+                  注意: 代理URL格式示例: https://cors.elfs.pp.ua/proxy?url=
                 </p>
               </div>
 
@@ -1309,10 +1322,10 @@ function App() {
                 <ul className="space-y-2">
                   <li className="flex items-center gap-2">
                     <button
-                      onClick={() => setCustomProxy('https://cors.cute.pp.ua/')}
+                      onClick={() => setCustomProxy('https://cors.elfs.pp.ua/proxy?url=')}
                       className="text-blue-600 hover:text-blue-800 text-sm"
                     >
-                      https://cors.cute.pp.ua/ (Deno代理)
+                      https://cors.elfs.pp.ua/proxy?url= (新Deno代理)
                     </button>
                     <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">推荐</span>
                   </li>
