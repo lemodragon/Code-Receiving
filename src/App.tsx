@@ -9,10 +9,10 @@ interface TableRow {
   apiConfig: APIConfig;
   status: string;
   countdown: number;
-  timer: number | null;
+  timer: any;
   sms: string;
   sendCooldown: number;
-  sendTimer: number | null;
+  sendTimer: any;
   lastSendTime: number;
   hasSent?: boolean;
   importedAsUsed?: boolean;
@@ -80,9 +80,7 @@ function App() {
     // 检查是否已经是代理URL，避免双重包装
     if (originalUrl.includes('allorigins.win') ||
       originalUrl.includes('cors.elfs.pp.ua') ||
-      originalUrl.includes('corsproxy.io') ||
-      originalUrl.includes('cors-proxy.htmldriven.com') ||
-      originalUrl.includes('thingproxy.freeboard.io')) {
+      originalUrl.includes('test.cors.workers.dev')) {
       console.log('🔍 检测到已是代理URL，直接返回:', originalUrl.substring(0, 80) + '...');
       return originalUrl;
     }
@@ -127,8 +125,8 @@ function App() {
       } else if (isSendSmsRequest || originalUrl.includes('/sendSms')) {
         // 发码请求但没有自定义代理，警告用户
         console.warn('⚠️ 发码请求但未配置自定义代理，可能会失败。建议配置: https://cors.elfs.pp.ua/proxy?url=');
-        // 回退到通用代理，但成功率较低
-        const fallbackProxy = 'https://corsproxy.io/?' + encodeURIComponent(originalUrl);
+        // 回退到allorigins代理，但成功率较低
+        const fallbackProxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(originalUrl);
         console.log('使用备用代理处理发码请求:', {
           原始URL: originalUrl,
           代理URL: fallbackProxy.substring(0, 80) + '...'
@@ -189,12 +187,10 @@ function App() {
       isSendSmsRequest = url.includes('/sendSms');
     }
 
-    // 过滤掉已知失效的代理服务，移除cors-anywhere.herokuapp.com
+    // 过滤掉已知失效的代理服务，只保留可用的代理
     const corsProxies = [
-      'https://corsproxy.io/?',
-      'https://cors-proxy.htmldriven.com/?url=',
-      'https://thingproxy.freeboard.io/fetch/',
-      'https://api.codetabs.com/v1/proxy?quest='
+      'https://api.allorigins.win/raw?url=',
+      'https://test.cors.workers.dev/?'
     ];
 
     console.log('fetchWithRetry 开始处理:', {
@@ -222,16 +218,8 @@ function App() {
           // 检查是否已经是代理URL，如果是则提取原始URL
           if (url.includes('api.allorigins.win/raw?url=')) {
             originalUrl = decodeURIComponent(url.split('url=')[1]);
-          } else if (url.includes('cors-proxy.htmldriven.com/?url=')) {
-            originalUrl = decodeURIComponent(url.split('url=')[1]);
-          } else if (url.includes('thingproxy.freeboard.io/fetch/')) {
-            originalUrl = url.replace('https://thingproxy.freeboard.io/fetch/', '');
-          } else if (url.includes('api.codetabs.com/v1/proxy?quest=')) {
-            originalUrl = decodeURIComponent(url.split('quest=')[1]);
-          } else if (url.includes('corsproxy.io/?')) {
-            originalUrl = decodeURIComponent(url.split('corsproxy.io/?')[1]);
-          } else if (url.includes('cors-anywhere.herokuapp.com/')) {
-            originalUrl = url.replace('https://cors-anywhere.herokuapp.com/', '');
+          } else if (url.includes('test.cors.workers.dev/?')) {
+            originalUrl = decodeURIComponent(url.split('test.cors.workers.dev/?')[1]);
           } else if (url.includes('cors.elfs.pp.ua/proxy?url=')) {
             // 处理Deno代理格式
             originalUrl = decodeURIComponent(url.split('proxy?url=')[1]);
@@ -258,15 +246,17 @@ function App() {
           }
 
           // 根据代理格式构建URL
-          if (selectedProxy.includes('quest=')) {
-            currentUrl = selectedProxy + encodeURIComponent(originalUrl);
-          } else if (selectedProxy.includes('url=')) {
+          if (selectedProxy.includes('url=')) {
+            // AllOrigins格式: ...?url=
             currentUrl = selectedProxy + encodeURIComponent(originalUrl);
           } else if (selectedProxy.includes('proxy?url=')) {
-            // Deno代理格式
+            // Deno代理格式: ...proxy?url=
+            currentUrl = selectedProxy + encodeURIComponent(originalUrl);
+          } else if (selectedProxy.includes('test.cors.workers.dev/?')) {
+            // Cloudflare代理格式: .../?
             currentUrl = selectedProxy + encodeURIComponent(originalUrl);
           } else {
-            // 对于直接拼接的代理，如cors-anywhere
+            // 其他格式，直接拼接
             currentUrl = selectedProxy + originalUrl;
           }
 
@@ -303,8 +293,8 @@ function App() {
           isSendSmsRequest,
           超时时间: `${timeoutMs / 1000}秒`,
           代理类型: currentUrl.includes('cors.elfs.pp.ua') ? '自定义代理' :
-            currentUrl.includes('corsproxy.io') ? 'corsproxy.io' :
-              currentUrl.includes('allorigins.win') ? 'allorigins' : '其他',
+            currentUrl.includes('allorigins.win') ? 'allorigins' :
+              currentUrl.includes('test.cors.workers.dev') ? 'cloudflare' : '其他',
           attempt: attempt + 1
         });
 
@@ -445,8 +435,8 @@ function App() {
             代理URL: proxyUrl,
             使用代理: proxyUrl !== sendSmsApi,
             代理服务: proxyUrl.includes('cors.elfs.pp.ua') ? 'Deno代理' :
-              proxyUrl.includes('corsproxy.io') ? 'corsproxy.io' :
-                proxyUrl.includes('allorigins.win') ? 'allorigins.win' : '其他代理'
+              proxyUrl.includes('allorigins.win') ? 'allorigins.win' :
+                proxyUrl.includes('test.cors.workers.dev') ? 'cloudflare' : '其他代理'
           });
         } catch (error) {
           console.error('发码代理测试失败:', error);
@@ -1467,20 +1457,25 @@ function App() {
                   </li>
                   <li className="flex items-center gap-2">
                     <button
-                      onClick={() => setCustomProxy('https://cors.bridged.cc/')}
+                      onClick={() => setCustomProxy('https://api.allorigins.win/raw?url=')}
                       className="text-blue-600 hover:text-blue-800 text-sm"
                     >
-                      https://cors.bridged.cc/ (Bridged)
+                      https://api.allorigins.win/raw?url= (AllOrigins)
                     </button>
-                    <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">API检测推荐</span>
-                    <span className="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full">无限制</span>
+                    <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full">20次/分钟</span>
+                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">备用</span>
                   </li>
-                  <li className="flex items-center gap-2 opacity-70">
-                    <span className="text-gray-600 text-sm">
-                      https://corsproxy.io/? (需注册)
-                    </span>
-                    <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full">需账户</span>
+                  <li className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCustomProxy('https://test.cors.workers.dev/?')}
+                      className="text-blue-600 hover:text-blue-800 text-sm"
+                    >
+                      https://test.cors.workers.dev/? (Cloudflare)
+                    </button>
+                    <span className="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full">无明确限制</span>
+                    <span className="text-xs bg-orange-100 text-orange-800 px-2 py-0.5 rounded-full">新增</span>
                   </li>
+
                 </ul>
               </div>
 
