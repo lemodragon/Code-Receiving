@@ -80,14 +80,6 @@ function App() {
       // 生产环境：优先使用您的自定义Deno CORS代理
       const customDenoProxy = 'https://cors.elfs.pp.ua/proxy?url=';
 
-      // 更新的备用CORS代理服务列表（移除易被阻止的服务）
-      // const backupProxies = [
-      //   'https://corsproxy.io/?',
-      //   'https://cors-anywhere.herokuapp.com/',
-      //   'https://api.codetabs.com/v1/proxy?quest='
-      // ];
-
-      // 优先使用您的自定义Deno代理
       return customDenoProxy + encodeURIComponent(originalUrl);
     } else {
       // 开发环境：使用Vite代理配置
@@ -106,11 +98,9 @@ function App() {
     let lastError: Error;
     const isProduction = isProductionEnvironment();
 
-    // 更新的CORS代理服务列表（移除api.allorigins.win）
+    // 备用代理服务列表，只在主代理失败时使用
     const corsProxies = [
-      'https://cors.elfs.pp.ua/proxy?url=',
       'https://corsproxy.io/?',
-      'https://api.codetabs.com/v1/proxy?quest=',
       'https://cors-anywhere.herokuapp.com/'
     ];
 
@@ -119,24 +109,27 @@ function App() {
 
       // 如果是生产环境且前面的尝试失败，尝试使用不同的代理
       if (isProduction && attempt > 0) {
-        // 提取原始URL
+        // 提取原始URL - 关键修复：正确处理您的Deno代理格式
         let originalUrl = url;
-        for (const proxy of corsProxies) {
-          if (url.includes(proxy.replace('?', '\\?'))) {
-            originalUrl = decodeURIComponent(url.replace(proxy, ''));
-            break;
-          }
+
+        // 检查是否已经是代理URL，如果是则提取原始URL
+        if (url.includes('cors.elfs.pp.ua/proxy?url=')) {
+          originalUrl = decodeURIComponent(url.split('url=')[1]);
+        } else if (url.includes('corsproxy.io/?')) {
+          originalUrl = decodeURIComponent(url.replace('https://corsproxy.io/?', ''));
+        } else if (url.includes('cors-anywhere.herokuapp.com/')) {
+          originalUrl = url.replace('https://cors-anywhere.herokuapp.com/', '');
         }
 
-        // 尝试下一个代理
-        const proxyIndex = attempt % corsProxies.length;
+        // 尝试备用代理（不包括您的主代理，避免重复）
+        const proxyIndex = (attempt - 1) % corsProxies.length;
         currentUrl = corsProxies[proxyIndex] + encodeURIComponent(originalUrl);
-        console.log(`尝试使用代理 ${proxyIndex + 1}: ${corsProxies[proxyIndex]}`);
+        console.log(`主代理失败，尝试备用代理 ${proxyIndex + 1}: ${corsProxies[proxyIndex]}`);
       }
 
       try {
         const controller = new AbortController();
-        // 减少超时时间从30秒到10秒，加快故障转移
+        // 减少超时时间到10秒，加快故障转移
         const timeoutId = setTimeout(() => controller.abort(), 10000);
 
         const response = await fetch(currentUrl, {
@@ -155,10 +148,10 @@ function App() {
         if (response.ok) {
           return response;
         } else if (response.status === 429) {
-          // 速率限制，等待更长时间后重试
+          // 速率限制，等待后重试
           console.warn(`速率限制 (429)，等待后重试...`);
           if (attempt < maxRetries) {
-            await new Promise(resolve => setTimeout(resolve, 3000 * (attempt + 1)));
+            await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1)));
             continue;
           }
         } else if (response.status >= 500) {
@@ -177,7 +170,7 @@ function App() {
         lastError = error as Error;
         console.warn(`尝试 ${attempt + 1} 失败:`, error);
 
-        // 如果是网络错误且在生产环境，立即尝试备用代理
+        // 如果是网络错误且在生产环境，快速尝试备用代理
         if (isProduction && attempt < maxRetries) {
           // 减少等待时间，加快代理切换
           await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
@@ -186,7 +179,7 @@ function App() {
 
         // 如果不是最后一次尝试，等待后重试
         if (attempt < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1))); // 减少延迟时间
+          await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
         }
       }
     }
@@ -586,14 +579,14 @@ function App() {
         data = await response.text();
       }
 
-      console.log('解析后的数据:', data); // 添加调试日志
+      console.log('解析后的数据:', data);
 
       const result = {
         success: config.sendParseRule.success(data),
         message: config.sendParseRule.extractMessage(data)
       };
 
-      console.log('解析结果:', result); // 添加调试日志
+      console.log('解析结果:', result);
 
       if (result.success) {
         newTableData[idx].lastSendResult = '发码成功: ' + result.message;
@@ -621,31 +614,22 @@ function App() {
     } catch (error) {
       console.error('发码请求失败:', error);
       const errorMessage = error instanceof Error ? error.message : '未知错误';
-      const isProduction = isProductionEnvironment();
 
       let userFriendlyMessage = '';
 
-      // 根据错误类型提供具体的故障排除建议
-      if (errorMessage.includes('fetch') || errorMessage.includes('network') || errorMessage.includes('AbortError')) {
-        if (isProduction) {
-          userFriendlyMessage = `网络连接失败: ${errorMessage}。\n\n可能的解决方案:\n1. 检查网络连接\n2. CORS代理服务可能暂时不可用，请稍后重试\n3. 尝试刷新页面重新加载\n4. 如果问题持续，可能是广告拦截器影响，请尝试暂时禁用`;
-        } else {
-          userFriendlyMessage = `网络连接失败: ${errorMessage}。请检查开发服务器代理配置或API服务状态。`;
-        }
+      // 简化错误处理，提供更清晰的用户反馈
+      if (errorMessage.includes('AbortError') || errorMessage.includes('timeout')) {
+        userFriendlyMessage = `请求超时: 网络连接不稳定或代理服务响应慢，请稍后重试`;
       } else if (errorMessage.includes('CORS') || errorMessage.includes('blocked')) {
-        userFriendlyMessage = `跨域请求被阻止: ${errorMessage}。\n\n这通常发生在:\n1. CORS代理服务不可用\n2. 浏览器安全策略或广告拦截器限制\n3. API服务不支持跨域请求\n\n建议:\n- 尝试禁用广告拦截器\n- 刷新页面重试\n- 检查浏览器控制台是否有其他错误信息`;
-      } else if (errorMessage.includes('429')) {
-        userFriendlyMessage = `请求频率过高: 已达到API调用限制。请等待一段时间后重试。`;
-      } else if (errorMessage.includes('408') || errorMessage.includes('timeout')) {
-        userFriendlyMessage = `请求超时: ${errorMessage}。\n\n解决方案:\n1. 检查网络连接稳定性\n2. 稍后重试，代理服务可能暂时过载\n3. 如果问题持续，请联系管理员`;
-      } else if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503')) {
-        userFriendlyMessage = `服务器错误: ${errorMessage}。API服务暂时不可用，请稍后重试。`;
+        userFriendlyMessage = `跨域请求被阻止: 代理服务可能不可用，正在自动切换到备用代理`;
       } else if (errorMessage.includes('404')) {
-        if (isProduction) {
-          userFriendlyMessage = `API端点未找到: 这可能是因为在静态托管环境中代理配置不可用。\n\n解决方案:\n1. 确保使用了正确的CORS代理\n2. 检查API URL是否正确\n3. 联系管理员确认部署配置`;
-        } else {
-          userFriendlyMessage = `API端点未找到: ${errorMessage}。请检查API URL或代理配置。`;
-        }
+        userFriendlyMessage = `API端点未找到: 请检查API地址是否正确`;
+      } else if (errorMessage.includes('429')) {
+        userFriendlyMessage = `请求频率过高: 请等待一段时间后重试`;
+      } else if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503')) {
+        userFriendlyMessage = `服务器错误: API服务暂时不可用，请稍后重试`;
+      } else if (errorMessage.includes('代理')) {
+        userFriendlyMessage = `代理服务错误: ${errorMessage}`;
       } else {
         userFriendlyMessage = `发码请求失败: ${errorMessage}`;
       }
