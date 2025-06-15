@@ -58,6 +58,10 @@ function App() {
     cooldown: 120
   });
 
+  // 添加自定义代理配置
+  const [customProxy, setCustomProxy] = useState('');
+  const [showProxyConfig, setShowProxyConfig] = useState(false);
+
   const [apiStatus, setApiStatus] = useState<{ [key: string]: 'checking' | 'online' | 'offline' | 'unknown' }>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -72,24 +76,63 @@ function App() {
   };
 
   // Helper function to convert external URL to proxy URL
-  const getProxyUrl = (originalUrl: string) => {
+  const getProxyUrl = (originalUrl: string, isSendSmsRequest = false) => {
     // 检测是否为生产环境（GitHub Pages、Netlify或其他静态托管）
     const isProduction = isProductionEnvironment();
 
+    // 获取当前环境信息
+    const envInfo = {
+      isProduction,
+      host: window.location.hostname,
+      isGithubPages: window.location.hostname.includes('github.io'),
+      isNetlify: window.location.hostname.includes('netlify.app'),
+      isVercel: window.location.hostname.includes('vercel.app'),
+      isSendSmsRequest
+    };
+
+    console.log('环境检测:', envInfo);
+
     if (isProduction) {
-      // 生产环境：使用可靠的CORS代理服务
-      // 优先使用 allorigins.win（免费且稳定）
-      const primaryProxy = 'https://api.allorigins.win/raw?url=';
-      return primaryProxy + encodeURIComponent(originalUrl);
+      // 优先使用用户的自定义代理，特别是对于发码请求
+      if (isSendSmsRequest || originalUrl.includes('/sendSms')) {
+        // 发码请求使用自定义代理
+        const proxyUrl = customProxy + originalUrl;
+        console.log('使用自定义代理处理发码请求:', {
+          原始URL: originalUrl,
+          代理URL: proxyUrl,
+          代理服务: customProxy
+        });
+        return proxyUrl;
+      } else {
+        // 普通GET请求可以继续使用allorigins.win
+        const primaryProxy = 'https://api.allorigins.win/raw?url=';
+        const proxyUrl = primaryProxy + encodeURIComponent(originalUrl);
+        console.log('使用allorigins代理处理普通请求:', {
+          原始URL: originalUrl,
+          代理URL: proxyUrl
+        });
+        return proxyUrl;
+      }
     } else {
       // 开发环境：使用Vite代理配置
       if (originalUrl.includes('csfaka.cn')) {
-        return originalUrl.replace('https://csfaka.cn', '/api-proxy/csfaka');
+        const proxyUrl = originalUrl.replace('https://csfaka.cn', '/api-proxy/csfaka');
+        console.log('开发环境使用Vite代理:', {
+          原始URL: originalUrl,
+          代理URL: proxyUrl
+        });
+        return proxyUrl;
       } else if (originalUrl.includes('api-sms.pro')) {
-        return originalUrl.replace('https://www.api-sms.pro', '/api-proxy/api-sms');
+        const proxyUrl = originalUrl.replace('https://www.api-sms.pro', '/api-proxy/api-sms');
+        console.log('开发环境使用Vite代理:', {
+          原始URL: originalUrl,
+          代理URL: proxyUrl
+        });
+        return proxyUrl;
       }
     }
 
+    console.log('不使用代理:', originalUrl);
     return originalUrl;
   };
 
@@ -98,19 +141,35 @@ function App() {
     let lastError: Error;
     const isProduction = isProductionEnvironment();
 
+    // 检查是否是发码请求（可能需要预检请求）
+    const isSendSmsRequest = url.includes('/sendSms');
+
     // 备用代理服务列表，只在主代理失败时使用
     const corsProxies = [
+      'https://cors.cute.pp.ua/',  // 用户的Deno代理，最可靠
+      'https://corsproxy.io/?',
+      'https://cors-anywhere.herokuapp.com/',
       'https://cors-proxy.htmldriven.com/?url=',
       'https://thingproxy.freeboard.io/fetch/',
       'https://api.codetabs.com/v1/proxy?quest='
     ];
+
+    // 如果是发码请求，确保Deno代理优先使用
+    if (isSendSmsRequest && !url.includes('cors.cute.pp.ua')) {
+      // 确保Deno代理在列表最前面
+      corsProxies.sort((a, b) => {
+        if (a.includes('cors.cute.pp.ua')) return -1;
+        if (b.includes('cors.cute.pp.ua')) return 1;
+        return 0;
+      });
+    }
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       let currentUrl = url;
 
       // 如果是生产环境且前面的尝试失败，尝试使用不同的代理
       if (isProduction && attempt > 0) {
-        // 提取原始URL - 关键修复：正确处理您的Deno代理格式
+        // 提取原始URL - 识别各种代理格式
         let originalUrl = url;
 
         // 检查是否已经是代理URL，如果是则提取原始URL
@@ -122,19 +181,35 @@ function App() {
           originalUrl = url.replace('https://thingproxy.freeboard.io/fetch/', '');
         } else if (url.includes('api.codetabs.com/v1/proxy?quest=')) {
           originalUrl = decodeURIComponent(url.split('quest=')[1]);
+        } else if (url.includes('corsproxy.io/?')) {
+          originalUrl = decodeURIComponent(url.split('corsproxy.io/?')[1]);
+        } else if (url.includes('cors-anywhere.herokuapp.com/')) {
+          originalUrl = url.replace('https://cors-anywhere.herokuapp.com/', '');
+        } else if (url.includes('cors.cute.pp.ua/')) {
+          // 处理用户的Deno代理
+          originalUrl = url.replace('https://cors.cute.pp.ua/', '');
         }
 
         // 尝试备用代理
         const proxyIndex = (attempt - 1) % corsProxies.length;
         const selectedProxy = corsProxies[proxyIndex];
 
-        if (selectedProxy.includes('quest=')) {
-          currentUrl = selectedProxy + encodeURIComponent(originalUrl);
-        } else {
-          currentUrl = selectedProxy + encodeURIComponent(originalUrl);
+        // 检查originalUrl是否已经包含协议，如果没有则添加https://
+        if (!originalUrl.startsWith('http')) {
+          originalUrl = 'https://' + originalUrl;
         }
 
-        console.log(`主代理失败，尝试备用代理 ${proxyIndex + 1}: ${selectedProxy}`);
+        // 根据代理格式构建URL
+        if (selectedProxy.includes('quest=')) {
+          currentUrl = selectedProxy + encodeURIComponent(originalUrl);
+        } else if (selectedProxy.includes('url=')) {
+          currentUrl = selectedProxy + encodeURIComponent(originalUrl);
+        } else {
+          // 对于直接拼接的代理，如cors-anywhere
+          currentUrl = selectedProxy + originalUrl;
+        }
+
+        console.log(`主代理失败，尝试备用代理 ${proxyIndex + 1}: ${selectedProxy}，原始URL: ${originalUrl.substring(0, 30)}...`);
       }
 
       try {
@@ -142,17 +217,36 @@ function App() {
         // 减少超时时间到10秒，加快故障转移
         const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-        const response = await fetch(currentUrl, {
-          ...options,
+        // 添加详细日志
+        console.log(`请求 #${attempt + 1} 到: ${currentUrl.substring(0, 50)}...`);
+
+        // 检查是否是发码请求，添加特殊处理
+        let fetchOptions = { ...options };
+
+        // 移除对发码请求的特殊处理，将其视为普通GET请求
+        // 只保留基本的请求头
+        fetchOptions = {
+          ...fetchOptions,
           signal: controller.signal,
           headers: {
-            'Content-Type': 'application/json',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            ...options.headers
+            ...fetchOptions.headers
           }
+        };
+
+        // 添加详细的请求日志
+        console.log(`发送请求: ${currentUrl.substring(0, 50)}...`, {
+          isSendSmsRequest,
+          headers: fetchOptions.headers,
+          attempt: attempt + 1
         });
 
+        const response = await fetch(currentUrl, fetchOptions);
+
         clearTimeout(timeoutId);
+
+        // 添加响应日志
+        console.log(`响应 #${attempt + 1} 状态: ${response.status} ${response.statusText}`);
 
         // 检查响应状态
         if (response.ok) {
@@ -235,6 +329,27 @@ function App() {
     });
 
     setApiStatus(finalStatus);
+
+    // 测试发码代理是否工作正常
+    if (uniqueApis.length > 0 && uniqueApis.some(api => api.includes('sendSms'))) {
+      console.log('检测到发码API，测试代理服务...');
+      const sendSmsApi = uniqueApis.find(api => api.includes('sendSms'));
+      if (sendSmsApi) {
+        try {
+          const proxyUrl = getProxyUrl(sendSmsApi, true);
+          console.log('发码API代理测试:', {
+            原始URL: sendSmsApi,
+            代理URL: proxyUrl,
+            使用代理: proxyUrl !== sendSmsApi,
+            代理服务: proxyUrl.includes('cors.cute.pp.ua') ? 'Deno代理' :
+              proxyUrl.includes('corsproxy.io') ? 'corsproxy.io' :
+                proxyUrl.includes('allorigins.win') ? 'allorigins.win' : '其他代理'
+          });
+        } catch (error) {
+          console.error('发码代理测试失败:', error);
+        }
+      }
+    }
   };
 
   // 初始化默认API配置
@@ -308,6 +423,22 @@ function App() {
 
     setApiConfigs(defaultConfigs);
     loadConfig(defaultConfigs);
+
+    // 加载自定义代理配置
+    try {
+      const savedProxy = localStorage.getItem('customProxy');
+      if (savedProxy) {
+        setCustomProxy(savedProxy);
+        console.log('已加载自定义代理:', savedProxy);
+      } else {
+        // 默认使用Deno代理
+        setCustomProxy('https://cors.cute.pp.ua/');
+        console.log('使用默认Deno代理: https://cors.cute.pp.ua/');
+      }
+    } catch (error) {
+      console.error('加载代理配置失败:', error);
+      setCustomProxy('https://cors.cute.pp.ua/');
+    }
   }, []);
 
   const saveConfig = (configs: APIConfig[]) => {
@@ -321,6 +452,10 @@ function App() {
       }));
 
       localStorage.setItem('apiConfigs', JSON.stringify(configsToSave));
+      console.log('API配置保存成功:', {
+        配置数量: configsToSave.length,
+        配置: configsToSave.map(c => c.name)
+      });
       return true;
     } catch (error) {
       console.error('保存配置失败:', error);
@@ -333,6 +468,10 @@ function App() {
       const saved = localStorage.getItem('apiConfigs');
       if (saved) {
         const loadedConfigs = JSON.parse(saved);
+        console.log('从本地存储加载API配置:', {
+          配置数量: loadedConfigs.length,
+          配置: loadedConfigs.map((c: any) => c.name)
+        });
 
         loadedConfigs.forEach((config: any) => {
           if (config.urlPattern && typeof config.urlPattern === 'string') {
@@ -359,6 +498,9 @@ function App() {
         });
 
         setApiConfigs([...defaultConfigs, ...loadedConfigs]);
+        console.log('API配置加载完成, 总配置数:', defaultConfigs.length + loadedConfigs.length);
+      } else {
+        console.log('未找到保存的API配置，使用默认配置');
       }
     } catch (error) {
       console.error('加载配置失败:', error);
@@ -565,8 +707,14 @@ function App() {
     setTableData(newTableData);
 
     try {
-      // Use proxy URL for the send API request
-      const proxyUrl = getProxyUrl(row.sendApi);
+      // 为发码请求使用Deno代理
+      const proxyUrl = getProxyUrl(row.sendApi, true);
+      console.log('发码使用代理URL:', proxyUrl);
+
+      // 添加更多日志记录
+      console.log('发送发码请求到:', row.sendApi);
+
+      // 发码请求是简单的GET请求，不需要特殊请求头
       const response = await fetchWithRetry(proxyUrl);
 
       // Check if response is ok first
@@ -582,11 +730,19 @@ function App() {
         console.log('发码API响应:', responseText); // 添加调试日志
         try {
           data = JSON.parse(responseText);
+          // 添加详细的响应解析日志
+          console.log('发码API响应解析成功:', {
+            status: data.status,
+            message: data.msg || '无消息',
+            endTime: data.end_time || '无结束时间'
+          });
         } catch (jsonError) {
+          console.error('JSON解析失败:', responseText);
           throw new Error(`JSON解析失败: 响应内容不是有效的JSON格式。响应内容: ${responseText.substring(0, 200)}...`);
         }
       } else {
         data = await response.text();
+        console.log('发码API响应(文本):', data);
       }
 
       console.log('解析后的数据:', data);
@@ -630,12 +786,16 @@ function App() {
       // 改进错误处理，提供更清晰的用户反馈
       if (errorMessage.includes('AbortError') || errorMessage.includes('timeout')) {
         userFriendlyMessage = `⏰ 请求超时: 网络连接不稳定，已自动重试多个代理服务，请稍后再试`;
-      } else if (errorMessage.includes('CORS') || errorMessage.includes('blocked')) {
-        userFriendlyMessage = `🚫 跨域请求被阻止: 所有代理服务暂时不可用，请稍后重试`;
+      } else if (errorMessage.includes('CORS') || errorMessage.includes('blocked') || errorMessage.includes('access control check')) {
+        userFriendlyMessage = `🚫 跨域请求被阻止: 代理服务可能不支持发码功能，请尝试其他代理或联系管理员`;
+      } else if (errorMessage.includes('preflight')) {
+        userFriendlyMessage = `🚫 预检请求失败: 当前代理不支持POST请求，请联系管理员配置适当的代理`;
       } else if (errorMessage.includes('404')) {
         userFriendlyMessage = `❌ API端点未找到: 请检查API地址是否正确`;
       } else if (errorMessage.includes('429')) {
         userFriendlyMessage = `⚠️ 请求频率过高: 请等待一段时间后重试`;
+      } else if (errorMessage.includes('403')) {
+        userFriendlyMessage = `🔒 请求被拒绝: 代理服务器拒绝了请求，请尝试其他代理或联系管理员`;
       } else if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503')) {
         userFriendlyMessage = `🔧 服务器错误: API服务暂时不可用，请稍后重试`;
       } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
@@ -1015,6 +1175,19 @@ function App() {
     return true;
   });
 
+  // 保存自定义代理配置
+  const saveCustomProxy = (proxy: string) => {
+    try {
+      localStorage.setItem('customProxy', proxy);
+      setCustomProxy(proxy);
+      console.log('自定义代理保存成功:', proxy);
+      return true;
+    } catch (error) {
+      console.error('保存自定义代理失败:', error);
+      return false;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-100 via-blue-50 to-cyan-100 relative">
       {/* 背景装饰 */}
@@ -1079,6 +1252,14 @@ function App() {
               <Settings className="w-4 h-4" />
               API配置
             </button>
+
+            <button
+              onClick={() => setShowProxyConfig(!showProxyConfig)}
+              className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-full hover:from-purple-600 hover:to-indigo-600 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
+            >
+              <Settings className="w-4 h-4" />
+              代理设置
+            </button>
           </div>
 
           <input
@@ -1089,6 +1270,86 @@ function App() {
             onChange={importCSV}
           />
         </div>
+
+        {/* 代理配置区域 */}
+        {showProxyConfig && (
+          <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/30 p-8 mb-8 transition-all duration-500 transform">
+            <h3 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+              <Settings className="w-6 h-6" />
+              代理服务配置
+            </h3>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  自定义代理URL (用于发码请求)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customProxy}
+                    onChange={(e) => setCustomProxy(e.target.value)}
+                    placeholder="例如: https://cors.cute.pp.ua/"
+                    className="flex-1 p-3 border-2 border-gray-200 rounded-xl focus:border-purple-400 focus:ring-4 focus:ring-purple-100 transition-all duration-300"
+                  />
+                  <button
+                    onClick={() => saveCustomProxy(customProxy)}
+                    className="px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all duration-300 shadow-lg hover:shadow-xl"
+                  >
+                    保存
+                  </button>
+                </div>
+                <p className="mt-2 text-sm text-gray-500">
+                  注意: 代理URL必须以 http:// 或 https:// 开头，并以 / 结尾。例如: https://cors.cute.pp.ua/
+                </p>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <h4 className="font-medium text-blue-800 mb-2">推荐代理服务</h4>
+                <ul className="space-y-2">
+                  <li className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCustomProxy('https://cors.cute.pp.ua/')}
+                      className="text-blue-600 hover:text-blue-800 text-sm"
+                    >
+                      https://cors.cute.pp.ua/ (Deno代理)
+                    </button>
+                    <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">推荐</span>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => setCustomProxy('https://corsproxy.io/?')}
+                      className="text-blue-600 hover:text-blue-800 text-sm"
+                    >
+                      https://corsproxy.io/? (corsproxy.io)
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => setCustomProxy('https://cors-anywhere.herokuapp.com/')}
+                      className="text-blue-600 hover:text-blue-800 text-sm"
+                    >
+                      https://cors-anywhere.herokuapp.com/ (cors-anywhere)
+                    </button>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertTriangle className="w-4 h-4 text-yellow-600" />
+                  <h4 className="font-medium text-yellow-800">当前代理状态</h4>
+                </div>
+                <p className="text-sm text-yellow-700">
+                  当前使用的代理服务: <span className="font-mono font-bold">{customProxy || '无'}</span>
+                </p>
+                <p className="text-xs text-yellow-600 mt-2">
+                  如果发码功能不正常，请尝试更换代理服务。推荐使用Deno代理，它已经被证明可以正常工作。
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* API配置区域 */}
         {showApiConfig && (
