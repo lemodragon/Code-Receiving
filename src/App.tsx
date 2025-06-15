@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Download, Settings, Send, RefreshCw, Check, Eye, EyeOff, Plus, Trash2, Edit3, TestTube, ChevronDown, ChevronUp, Copy, MessageSquare, Clock, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Upload, Download, Settings, Send, RefreshCw, Check, Eye, EyeOff, Plus, Trash2, Edit3, TestTube, ChevronDown, ChevronUp, Copy, MessageSquare, Clock, CheckCircle, AlertTriangle, Activity } from 'lucide-react';
 
 interface TableRow {
   index: number;
@@ -57,30 +57,76 @@ function App() {
     noSms: '',
     cooldown: 120
   });
-  
+
+  const [apiStatus, setApiStatus] = useState<{ [key: string]: 'checking' | 'online' | 'offline' | 'unknown' }>({});
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const configInputRef = useRef<HTMLInputElement>(null);
 
+  // 统一的环境检测函数
+  const isProductionEnvironment = () => {
+    return import.meta.env.PROD ||
+      window.location.hostname.includes('github.io') ||
+      window.location.hostname.includes('netlify.app') ||
+      window.location.hostname.includes('vercel.app') ||
+      (!window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1'));
+  };
+
   // Helper function to convert external URL to proxy URL
   const getProxyUrl = (originalUrl: string) => {
-    if (originalUrl.includes('csfaka.cn')) {
-      return originalUrl.replace('https://csfaka.cn', '/api-proxy/csfaka');
-    } else if (originalUrl.includes('api-sms.pro')) {
-      return originalUrl.replace('https://www.api-sms.pro', '/api-proxy/api-sms');
+    // 检测是否为生产环境（GitHub Pages、Netlify或其他静态托管）
+    const isProduction = isProductionEnvironment();
+
+    if (isProduction) {
+      // 生产环境：使用CORS代理服务
+      const corsProxyUrl = 'https://cors-anywhere.herokuapp.com/';
+      // 备用CORS代理服务列表
+      const backupProxies = [
+        'https://api.allorigins.win/raw?url=',
+        'https://corsproxy.io/?'
+      ];
+
+      // 优先使用主要的CORS代理
+      return corsProxyUrl + encodeURIComponent(originalUrl);
+    } else {
+      // 开发环境：使用Vite代理配置
+      if (originalUrl.includes('csfaka.cn')) {
+        return originalUrl.replace('https://csfaka.cn', '/api-proxy/csfaka');
+      } else if (originalUrl.includes('api-sms.pro')) {
+        return originalUrl.replace('https://www.api-sms.pro', '/api-proxy/api-sms');
+      }
     }
+
     return originalUrl;
   };
 
   // Enhanced fetch function with retry logic and better error handling
   const fetchWithRetry = async (url: string, options: RequestInit = {}, maxRetries = 2): Promise<Response> => {
     let lastError: Error;
-    
+    const isProduction = isProductionEnvironment();
+
+    // 备用CORS代理服务列表
+    const backupProxies = [
+      'https://api.allorigins.win/raw?url=',
+      'https://corsproxy.io/?'
+    ];
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      let currentUrl = url;
+
+      // 如果是生产环境且前面的尝试失败，尝试使用备用代理
+      if (isProduction && attempt > 0 && url.includes('cors-anywhere.herokuapp.com')) {
+        const originalUrl = decodeURIComponent(url.replace('https://cors-anywhere.herokuapp.com/', ''));
+        const proxyIndex = (attempt - 1) % backupProxies.length;
+        currentUrl = backupProxies[proxyIndex] + encodeURIComponent(originalUrl);
+        console.log(`尝试使用备用代理 ${proxyIndex + 1}:`, currentUrl);
+      }
+
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
-        
-        const response = await fetch(url, {
+
+        const response = await fetch(currentUrl, {
           ...options,
           signal: controller.signal,
           headers: {
@@ -89,24 +135,89 @@ function App() {
             ...options.headers
           }
         });
-        
+
         clearTimeout(timeoutId);
-        
-        // If we get a response, return it (even if it's an error status)
+
+        // 检查响应状态
+        if (response.ok) {
+          return response;
+        } else if (response.status === 429) {
+          // 速率限制，等待更长时间后重试
+          console.warn(`速率限制 (429)，等待后重试...`);
+          if (attempt < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 5000 * (attempt + 1)));
+            continue;
+          }
+        } else if (response.status >= 500) {
+          // 服务器错误，可以重试
+          console.warn(`服务器错误 (${response.status})，准备重试...`);
+          if (attempt < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1)));
+            continue;
+          }
+        }
+
+        // 对于其他错误状态，仍然返回响应让调用者处理
         return response;
-        
+
       } catch (error) {
         lastError = error as Error;
-        console.warn(`Attempt ${attempt + 1} failed:`, error);
-        
-        // If this isn't the last attempt, wait before retrying
+        console.warn(`尝试 ${attempt + 1} 失败:`, error);
+
+        // 如果是网络错误且在生产环境，尝试备用代理
+        if (isProduction && attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          continue;
+        }
+
+        // 如果不是最后一次尝试，等待后重试
         if (attempt < maxRetries) {
           await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1))); // Progressive delay
         }
       }
     }
-    
+
     throw lastError!;
+  };
+
+  // API服务状态检测函数
+  const checkApiStatus = async (apiUrl: string): Promise<'online' | 'offline'> => {
+    try {
+      const proxyUrl = getProxyUrl(apiUrl);
+      const response = await fetchWithRetry(proxyUrl, {}, 1); // 只尝试一次
+      return response.ok ? 'online' : 'offline';
+    } catch (error) {
+      console.warn('API状态检测失败:', error);
+      return 'offline';
+    }
+  };
+
+  // 批量检测API状态
+  const checkAllApiStatus = async () => {
+    const uniqueApis = [...new Set(tableData.map(row => row.api))];
+    const statusUpdates: { [key: string]: 'checking' | 'online' | 'offline' } = {};
+
+    // 设置所有API为检测中状态
+    uniqueApis.forEach(api => {
+      statusUpdates[api] = 'checking';
+    });
+    setApiStatus(statusUpdates);
+
+    // 并发检测所有API状态
+    const statusPromises = uniqueApis.map(async (api) => {
+      const status = await checkApiStatus(api);
+      return { api, status };
+    });
+
+    const results = await Promise.all(statusPromises);
+
+    // 更新状态
+    const finalStatus: { [key: string]: 'online' | 'offline' } = {};
+    results.forEach(({ api, status }) => {
+      finalStatus[api] = status;
+    });
+
+    setApiStatus(finalStatus);
   };
 
   // 初始化默认API配置
@@ -148,15 +259,11 @@ function App() {
         sendParseRule: {
           success: (data) => {
             // 根据实际API响应格式调整判断逻辑
+            // status 200 = 成功, status 201 = 频率限制但请求有效
             if (data.status === 200) {
-              // 检查是否有嵌套的success字段
-              if (data.data && typeof data.data === 'object') {
-                if (data.data.data && typeof data.data.data === 'object') {
-                  return data.data.data.success === true;
-                }
-                return data.data.success === true;
-              }
-              return true; // 如果status是200且有msg，认为成功
+              return true; // 发码成功
+            } else if (data.status === 201) {
+              return false; // 频率限制，视为失败但会显示具体消息
             }
             return false;
           },
@@ -181,7 +288,7 @@ function App() {
         }
       }
     ];
-    
+
     setApiConfigs(defaultConfigs);
     loadConfig(defaultConfigs);
   }, []);
@@ -195,7 +302,7 @@ function App() {
         inputPatterns: config.inputPatterns.map(pattern => pattern.toString()),
         sendUrlPattern: config.sendUrlPattern?.toString()
       }));
-      
+
       localStorage.setItem('apiConfigs', JSON.stringify(configsToSave));
       return true;
     } catch (error) {
@@ -209,7 +316,7 @@ function App() {
       const saved = localStorage.getItem('apiConfigs');
       if (saved) {
         const loadedConfigs = JSON.parse(saved);
-        
+
         loadedConfigs.forEach((config: any) => {
           if (config.urlPattern && typeof config.urlPattern === 'string') {
             const match = config.urlPattern.match(/^\/(.+)\/([gimuy]*)$/);
@@ -335,13 +442,13 @@ function App() {
   const fetchSms = async (apiUrl: string, config: APIConfig) => {
     const proxyUrl = getProxyUrl(apiUrl);
     const response = await fetchWithRetry(proxyUrl);
-    
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
-    
+
     let data;
-    
+
     if (config.responseType === 'json') {
       const text = await response.text();
       try {
@@ -434,7 +541,7 @@ function App() {
     if (row.sendCooldown > 0) return;
 
     const newTableData = [...tableData];
-    
+
     // 展开当前行显示发码结果
     newTableData[idx].isExpanded = true;
     newTableData[idx].lastSendResult = '发码中...';
@@ -444,7 +551,7 @@ function App() {
       // Use proxy URL for the send API request
       const proxyUrl = getProxyUrl(row.sendApi);
       const response = await fetchWithRetry(proxyUrl);
-      
+
       // Check if response is ok first
       if (!response.ok) {
         const errorText = await response.text();
@@ -452,7 +559,7 @@ function App() {
       }
 
       let data;
-      
+
       if (config.sendResponseType === 'json') {
         const responseText = await response.text();
         console.log('发码API响应:', responseText); // 添加调试日志
@@ -477,7 +584,7 @@ function App() {
       if (result.success) {
         newTableData[idx].lastSendResult = '发码成功: ' + result.message;
         newTableData[idx].sendCooldown = config.sendParseRule.cooldownTime || 120;
-        
+
         // Start cooldown timer
         newTableData[idx].sendTimer = setInterval(() => {
           newTableData[idx].sendCooldown--;
@@ -500,14 +607,34 @@ function App() {
     } catch (error) {
       console.error('发码请求失败:', error);
       const errorMessage = error instanceof Error ? error.message : '未知错误';
-      
-      // Check if it's a network connectivity issue
-      if (errorMessage.includes('fetch') || errorMessage.includes('network') || errorMessage.includes('socket hang up') || errorMessage.includes('HTTP 500')) {
-        newTableData[idx].lastSendResult = `网络连接失败: ${errorMessage}。请检查API服务是否正常运行，或稍后重试。`;
+      const isProduction = isProductionEnvironment();
+
+      let userFriendlyMessage = '';
+
+      // 根据错误类型提供具体的故障排除建议
+      if (errorMessage.includes('fetch') || errorMessage.includes('network')) {
+        if (isProduction) {
+          userFriendlyMessage = `网络连接失败: ${errorMessage}。\n\n可能的解决方案:\n1. 检查网络连接\n2. CORS代理服务可能暂时不可用，请稍后重试\n3. 尝试刷新页面重新加载`;
+        } else {
+          userFriendlyMessage = `网络连接失败: ${errorMessage}。请检查开发服务器代理配置或API服务状态。`;
+        }
+      } else if (errorMessage.includes('CORS')) {
+        userFriendlyMessage = `跨域请求被阻止: ${errorMessage}。\n\n这通常发生在:\n1. CORS代理服务不可用\n2. 浏览器安全策略限制\n3. API服务不支持跨域请求`;
+      } else if (errorMessage.includes('429')) {
+        userFriendlyMessage = `请求频率过高: 已达到API调用限制。请等待一段时间后重试。`;
+      } else if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503')) {
+        userFriendlyMessage = `服务器错误: ${errorMessage}。API服务暂时不可用，请稍后重试。`;
+      } else if (errorMessage.includes('404')) {
+        if (isProduction) {
+          userFriendlyMessage = `API端点未找到: 这可能是因为在静态托管环境中代理配置不可用。\n\n解决方案:\n1. 确保使用了正确的CORS代理\n2. 检查API URL是否正确\n3. 联系管理员确认部署配置`;
+        } else {
+          userFriendlyMessage = `API端点未找到: ${errorMessage}。请检查API URL或代理配置。`;
+        }
       } else {
-        newTableData[idx].lastSendResult = '发码请求失败: ' + errorMessage;
+        userFriendlyMessage = `发码请求失败: ${errorMessage}`;
       }
-      
+
+      newTableData[idx].lastSendResult = userFriendlyMessage;
       setTableData([...newTableData]);
     }
   };
@@ -554,7 +681,7 @@ function App() {
 
       lines.forEach((line, idx) => {
         if (idx === 0 && line.includes('手机号')) return;
-        
+
         const arr = line.split(',');
         if (arr.length < 2) return;
 
@@ -605,7 +732,7 @@ function App() {
 
   const addApiConfig = () => {
     const { name, type, url, sendUrl, patterns, noSms, cooldown } = newApiConfig;
-    
+
     if (!name || !url || !patterns || !noSms) {
       alert('请填写所有必填字段');
       return;
@@ -737,13 +864,13 @@ function App() {
 
     // 检查是否是JSON格式的验证码短信
     const isJsonSms = sms.startsWith('{') && sms.includes('"code"');
-    
+
     if (isJsonSms) {
       try {
         const data = JSON.parse(sms);
         const code = data.data?.match(/\d{4,8}/)?.[0] || data.code;
         const message = data.data || data.msg || sms;
-        
+
         return (
           <div className="space-y-3">
             {code && (
@@ -851,19 +978,17 @@ function App() {
               ) : (
                 <CheckCircle className="w-4 h-4 text-green-600" />
               )}
-              <span className={`text-xs font-medium ${
-                lastSendResult.includes('失败') || lastSendResult.includes('错误') 
-                  ? 'text-red-700' 
-                  : 'text-green-700'
-              }`}>
+              <span className={`text-xs font-medium ${lastSendResult.includes('失败') || lastSendResult.includes('错误')
+                ? 'text-red-700'
+                : 'text-green-700'
+                }`}>
                 发码结果
               </span>
             </div>
-            <div className={`text-xs ${
-              lastSendResult.includes('失败') || lastSendResult.includes('错误') 
-                ? 'text-red-800' 
-                : 'text-green-800'
-            }`}>
+            <div className={`text-xs ${lastSendResult.includes('失败') || lastSendResult.includes('错误')
+              ? 'text-red-800'
+              : 'text-green-800'
+              }`}>
               {lastSendResult}
             </div>
           </div>
@@ -885,7 +1010,7 @@ function App() {
       {/* 背景装饰 */}
       <div className="absolute inset-0 bg-gradient-to-r from-purple-400/10 via-pink-400/10 to-blue-400/10"></div>
       <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_50%,rgba(120,119,198,0.1),transparent_50%)]"></div>
-      
+
       <div className="relative z-10 container mx-auto px-4 py-8 pb-20">
         {/* 标题 */}
         <div className="text-center mb-8">
@@ -903,7 +1028,7 @@ function App() {
             className="w-full h-32 p-4 border-2 border-gray-200 rounded-2xl focus:border-purple-400 focus:ring-4 focus:ring-purple-100 transition-all duration-300 resize-none bg-gray-50/50 backdrop-blur-sm"
             placeholder="请粘贴您的接码数据文本..."
           />
-          
+
           <div className="flex flex-wrap gap-4 mt-6">
             <button
               onClick={parseData}
@@ -912,7 +1037,7 @@ function App() {
               <Upload className="w-4 h-4" />
               导入文本
             </button>
-            
+
             <button
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-full hover:from-blue-600 hover:to-cyan-600 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
@@ -920,7 +1045,7 @@ function App() {
               <Upload className="w-4 h-4" />
               导入CSV
             </button>
-            
+
             <button
               onClick={exportCSV}
               className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-full hover:from-green-600 hover:to-emerald-600 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
@@ -928,7 +1053,15 @@ function App() {
               <Download className="w-4 h-4" />
               导出CSV
             </button>
-            
+
+            <button
+              onClick={checkAllApiStatus}
+              className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-full hover:from-blue-600 hover:to-indigo-600 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
+            >
+              <Activity className="w-4 h-4" />
+              检测API状态
+            </button>
+
             <button
               onClick={() => setShowApiConfig(!showApiConfig)}
               className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-full hover:from-orange-600 hover:to-red-600 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
@@ -954,7 +1087,7 @@ function App() {
               <Settings className="w-6 h-6" />
               API配置管理
             </h3>
-            
+
             {/* 当前配置列表 */}
             <div className="space-y-3 mb-8">
               {apiConfigs.map((config, index) => (
@@ -987,62 +1120,62 @@ function App() {
                   type="text"
                   placeholder="API名称"
                   value={newApiConfig.name}
-                  onChange={(e) => setNewApiConfig({...newApiConfig, name: e.target.value})}
+                  onChange={(e) => setNewApiConfig({ ...newApiConfig, name: e.target.value })}
                   className="p-3 border-2 border-gray-200 rounded-xl focus:border-purple-400 focus:ring-4 focus:ring-purple-100 transition-all duration-300"
                 />
                 <select
                   value={newApiConfig.type}
-                  onChange={(e) => setNewApiConfig({...newApiConfig, type: e.target.value as 'text' | 'json'})}
+                  onChange={(e) => setNewApiConfig({ ...newApiConfig, type: e.target.value as 'text' | 'json' })}
                   className="p-3 border-2 border-gray-200 rounded-xl focus:border-purple-400 focus:ring-4 focus:ring-purple-100 transition-all duration-300"
                 >
                   <option value="text">文本响应</option>
                   <option value="json">JSON响应</option>
                 </select>
               </div>
-              
+
               <div className="space-y-4">
                 <input
                   type="text"
                   placeholder="接收API URL模式"
                   value={newApiConfig.url}
-                  onChange={(e) => setNewApiConfig({...newApiConfig, url: e.target.value})}
+                  onChange={(e) => setNewApiConfig({ ...newApiConfig, url: e.target.value })}
                   className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-400 focus:ring-4 focus:ring-purple-100 transition-all duration-300"
                 />
-                
+
                 <input
                   type="text"
                   placeholder="发送API URL模式 (可选)"
                   value={newApiConfig.sendUrl}
-                  onChange={(e) => setNewApiConfig({...newApiConfig, sendUrl: e.target.value})}
+                  onChange={(e) => setNewApiConfig({ ...newApiConfig, sendUrl: e.target.value })}
                   className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-400 focus:ring-4 focus:ring-purple-100 transition-all duration-300"
                 />
-                
+
                 <textarea
                   placeholder="输入文本匹配模式 (每行一个正则表达式)"
                   value={newApiConfig.patterns}
-                  onChange={(e) => setNewApiConfig({...newApiConfig, patterns: e.target.value})}
+                  onChange={(e) => setNewApiConfig({ ...newApiConfig, patterns: e.target.value })}
                   className="w-full h-20 p-3 border-2 border-gray-200 rounded-xl focus:border-purple-400 focus:ring-4 focus:ring-purple-100 transition-all duration-300 resize-none"
                 />
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <input
                     type="text"
                     placeholder="无短信时的响应内容"
                     value={newApiConfig.noSms}
-                    onChange={(e) => setNewApiConfig({...newApiConfig, noSms: e.target.value})}
+                    onChange={(e) => setNewApiConfig({ ...newApiConfig, noSms: e.target.value })}
                     className="p-3 border-2 border-gray-200 rounded-xl focus:border-purple-400 focus:ring-4 focus:ring-purple-100 transition-all duration-300"
                   />
-                  
+
                   <input
                     type="number"
                     placeholder="发码冷却时间（秒）"
                     value={newApiConfig.cooldown}
-                    onChange={(e) => setNewApiConfig({...newApiConfig, cooldown: parseInt(e.target.value) || 120})}
+                    onChange={(e) => setNewApiConfig({ ...newApiConfig, cooldown: parseInt(e.target.value) || 120 })}
                     className="p-3 border-2 border-gray-200 rounded-xl focus:border-purple-400 focus:ring-4 focus:ring-purple-100 transition-all duration-300"
                   />
                 </div>
               </div>
-              
+
               <div className="flex gap-4 mt-6">
                 <button
                   onClick={addApiConfig}
@@ -1059,7 +1192,7 @@ function App() {
         {/* 折叠摘要 */}
         {collapsibleRecords.length > 0 && (
           <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/30 p-6 mb-8 transition-all duration-300 hover:shadow-3xl">
-            <div 
+            <div
               className="flex items-center justify-between cursor-pointer"
               onClick={() => setIsCollapsed(!isCollapsed)}
             >
@@ -1098,25 +1231,40 @@ function App() {
                   const originalIndex = tableData.indexOf(row);
                   const keyMatch = row.api.match(/key=([a-zA-Z0-9]+)/);
                   const key = keyMatch ? keyMatch[1] : row.api;
-                  
+
                   return (
                     <React.Fragment key={i}>
-                      <tr 
-                        className={`transition-all duration-300 hover:bg-gradient-to-r hover:from-purple-50 hover:to-blue-50 ${
-                          row.status === '已使用' ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-l-4 border-green-400' : ''
-                        } ${row.isExpanded ? 'border-b-0' : ''}`}
+                      <tr
+                        className={`transition-all duration-300 hover:bg-gradient-to-r hover:from-purple-50 hover:to-blue-50 ${row.status === '已使用' ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-l-4 border-green-400' : ''
+                          } ${row.isExpanded ? 'border-b-0' : ''}`}
                       >
                         <td className="px-4 py-4 font-medium text-gray-800">{row.index}</td>
                         <td className="px-4 py-4 font-mono text-gray-800">{row.phone}</td>
                         <td className="px-4 py-4">
-                          <a 
-                            href={row.api} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:text-blue-800 font-mono text-sm underline decoration-dotted"
-                          >
-                            {key}
-                          </a>
+                          <div className="flex items-center gap-2">
+                            <a
+                              href={row.api}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 font-mono text-sm underline decoration-dotted"
+                            >
+                              {key}
+                            </a>
+                            {/* API状态指示器 */}
+                            {apiStatus[row.api] && (
+                              <div className="flex items-center">
+                                {apiStatus[row.api] === 'checking' && (
+                                  <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" title="检测中..."></div>
+                                )}
+                                {apiStatus[row.api] === 'online' && (
+                                  <div className="w-2 h-2 bg-green-400 rounded-full" title="API在线"></div>
+                                )}
+                                {apiStatus[row.api] === 'offline' && (
+                                  <div className="w-2 h-2 bg-red-400 rounded-full" title="API离线"></div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-4">
                           <button
@@ -1155,11 +1303,10 @@ function App() {
                           )}
                         </td>
                         <td className="px-4 py-4">
-                          <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                            row.status === '已使用' 
-                              ? 'bg-gradient-to-r from-green-100 to-emerald-100 text-green-800' 
-                              : 'bg-gradient-to-r from-orange-100 to-red-100 text-orange-800'
-                          }`}>
+                          <span className={`px-3 py-1 rounded-full text-sm font-medium ${row.status === '已使用'
+                            ? 'bg-gradient-to-r from-green-100 to-emerald-100 text-green-800'
+                            : 'bg-gradient-to-r from-orange-100 to-red-100 text-orange-800'
+                            }`}>
                             {row.status}
                           </span>
                         </td>
@@ -1183,7 +1330,7 @@ function App() {
                           </div>
                         </td>
                       </tr>
-                      
+
                       {/* 折叠的短信内容行 */}
                       {row.isExpanded && (
                         <tr className="bg-gradient-to-r from-gray-50 to-blue-50 border-l-4 border-blue-400">
@@ -1212,9 +1359,9 @@ function App() {
         <div className="container mx-auto px-4 py-3">
           <div className="flex items-center justify-center gap-4 text-sm text-gray-600">
             <span>🔒 本工具不存储不上传任何数据，请放心使用</span>
-            <a 
-              href="https://demo.lvdpub.com" 
-              target="_blank" 
+            <a
+              href="https://demo.lvdpub.com"
+              target="_blank"
               rel="noopener noreferrer"
               className="text-purple-600 hover:text-purple-800 font-medium transition-colors"
             >

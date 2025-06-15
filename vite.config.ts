@@ -18,6 +18,11 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
+  define: {
+    // 定义环境变量，用于运行时检测
+    __CORS_PROXY_URL__: JSON.stringify(process.env.VITE_CORS_PROXY_URL || 'https://cors-anywhere.herokuapp.com/'),
+    __ENABLE_CORS_PROXY__: JSON.stringify(process.env.VITE_ENABLE_CORS_PROXY || 'true'),
+  },
   server: {
     proxy: {
       '/api-proxy/csfaka': {
