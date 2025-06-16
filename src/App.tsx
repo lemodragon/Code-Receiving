@@ -720,8 +720,12 @@ function App() {
   };
 
   const fetchSms = async (apiUrl: string, config: APIConfig) => {
+    console.log(`🌐 发送HTTP请求获取短信: ${apiUrl.substring(0, 80)}...`);
+
     // 直接传递原始URL给fetchWithRetry，让它内部处理代理逻辑，避免双重代理
     const response = await fetchWithRetry(apiUrl);
+
+    console.log(`📡 收到HTTP响应: 状态${response.status} ${response.statusText}`);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -731,27 +735,43 @@ function App() {
 
     if (config.responseType === 'json') {
       const text = await response.text();
+      console.log(`📄 收到JSON响应文本: ${text.substring(0, 200)}...`);
       try {
         data = JSON.parse(text);
+        console.log(`✅ JSON解析成功:`, data);
       } catch (jsonError) {
+        console.error(`❌ JSON解析失败:`, jsonError);
         throw new Error(`JSON解析失败: 响应内容不是有效的JSON格式。响应内容: ${text.substring(0, 200)}...`);
       }
     } else {
       data = await response.text();
+      console.log(`📄 收到文本响应: ${data.substring(0, 200)}...`);
     }
 
-    return {
+    const result = {
       success: config.parseRule.success(data),
       sms: config.parseRule.extractSms(data),
       raw: data
     };
+
+    console.log(`🔍 短信解析结果:`, {
+      success: result.success,
+      sms: result.sms.substring(0, 100) + '...',
+      configName: config.name
+    });
+
+    return result;
   };
 
   const toggleExpanded = (idx: number) => {
-    const newTableData = [...tableData];
-    // 切换当前行的展开状态
-    newTableData[idx].isExpanded = !newTableData[idx].isExpanded;
-    setTableData(newTableData);
+    setTableData(prevData => {
+      const updatedData = [...prevData];
+      updatedData[idx] = {
+        ...updatedData[idx],
+        isExpanded: !updatedData[idx].isExpanded
+      };
+      return updatedData;
+    });
   };
 
   const sendOrRefresh = async (idx: number) => {
@@ -759,51 +779,94 @@ function App() {
     if (row.status === '已使用') return;
 
     const config = row.apiConfig || apiConfigs[0];
-    const newTableData = [...tableData];
-
-    // 展开当前行显示短信内容
-    newTableData[idx].isExpanded = true;
 
     if (!row.hasSent) {
-      newTableData[idx].hasSent = true;
-      newTableData[idx].countdown = 60;
-      newTableData[idx].sms = '获取中...';
-      setTableData(newTableData);
+      console.log(`📨 首次发送短信请求 - 行${idx + 1}, API: ${row.api.substring(0, 50)}...`);
 
-      try {
-        const result = await fetchSms(row.api, config);
-        newTableData[idx].sms = result.sms;
-        setTableData([...newTableData]);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : '未知错误';
-        newTableData[idx].sms = `请求失败: ${errorMessage}`;
-        console.error('获取短信失败:', error);
-        setTableData([...newTableData]);
-      }
+      // 创建倒计时定时器
+      const timer = setInterval(() => {
+        setTableData(prevData => {
+          const updatedData = [...prevData];
+          const currentRow = { ...updatedData[idx] };
+          currentRow.countdown = Math.max(0, currentRow.countdown - 1);
 
-      newTableData[idx].timer = setInterval(() => {
-        newTableData[idx].countdown--;
-        if (newTableData[idx].countdown <= 0) {
-          if (newTableData[idx].timer) {
-            clearInterval(newTableData[idx].timer);
+          if (currentRow.countdown <= 0) {
+            if (currentRow.timer) {
+              clearInterval(currentRow.timer);
+            }
+            currentRow.timer = null;
           }
-          newTableData[idx].countdown = 0;
-        }
-        setTableData([...newTableData]);
+
+          updatedData[idx] = currentRow;
+          return updatedData;
+        });
       }, 1000);
-    } else {
-      newTableData[idx].sms = '刷新中...';
-      setTableData(newTableData);
+
+      // 一次性设置所有初始状态，包括定时器
+      setTableData(prevData => {
+        const updatedData = [...prevData];
+        updatedData[idx] = {
+          ...updatedData[idx],
+          hasSent: true,
+          countdown: 60,
+          sms: '获取中...',
+          isExpanded: true,
+          timer: timer
+        };
+        return updatedData;
+      });
 
       try {
         const result = await fetchSms(row.api, config);
-        newTableData[idx].sms = result.sms;
-        setTableData([...newTableData]);
+        console.log(`✅ 首次获取成功 - 行${idx + 1}, 获取到短信:`, result.sms.substring(0, 100) + '...');
+
+        // 只更新短信内容，保持其他状态不变
+        setTableData(prevData => {
+          const updatedData = [...prevData];
+          updatedData[idx] = { ...updatedData[idx], sms: result.sms };
+          return updatedData;
+        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : '未知错误';
-        newTableData[idx].sms = `请求失败: ${errorMessage}`;
-        console.error('刷新短信失败:', error);
-        setTableData([...newTableData]);
+        console.error(`❌ 首次获取失败 - 行${idx + 1}:`, error);
+
+        // 只更新短信内容，保持其他状态不变
+        setTableData(prevData => {
+          const updatedData = [...prevData];
+          updatedData[idx] = { ...updatedData[idx], sms: `请求失败: ${errorMessage}` };
+          return updatedData;
+        });
+      }
+    } else {
+      // 刷新逻辑：使用函数式状态更新避免状态过时问题
+      setTableData(prevData => {
+        const updatedData = [...prevData];
+        updatedData[idx] = { ...updatedData[idx], sms: '刷新中...', isExpanded: true };
+        return updatedData;
+      });
+
+      console.log(`🔄 开始刷新短信 - 行${idx + 1}, API: ${row.api.substring(0, 50)}...`);
+
+      try {
+        const result = await fetchSms(row.api, config);
+        console.log(`✅ 刷新成功 - 行${idx + 1}, 获取到短信:`, result.sms.substring(0, 100) + '...');
+
+        // 使用函数式状态更新确保使用最新状态
+        setTableData(prevData => {
+          const updatedData = [...prevData];
+          updatedData[idx] = { ...updatedData[idx], sms: result.sms };
+          return updatedData;
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : '未知错误';
+        console.error(`❌ 刷新失败 - 行${idx + 1}:`, error);
+
+        // 使用函数式状态更新确保使用最新状态
+        setTableData(prevData => {
+          const updatedData = [...prevData];
+          updatedData[idx] = { ...updatedData[idx], sms: `请求失败: ${errorMessage}` };
+          return updatedData;
+        });
       }
     }
   };
@@ -823,12 +886,16 @@ function App() {
 
     if (row.sendCooldown > 0) return;
 
-    const newTableData = [...tableData];
-
-    // 展开当前行显示发码结果
-    newTableData[idx].isExpanded = true;
-    newTableData[idx].lastSendResult = '发码中...';
-    setTableData(newTableData);
+    // 设置发码中状态
+    setTableData(prevData => {
+      const updatedData = [...prevData];
+      updatedData[idx] = {
+        ...updatedData[idx],
+        isExpanded: true,
+        lastSendResult: '发码中...'
+      };
+      return updatedData;
+    });
 
     try {
       // 发码请求直接传递原始URL给fetchWithRetry，让它内部处理代理逻辑
@@ -840,22 +907,36 @@ function App() {
       // 只要请求发送成功（没有网络错误），就认定为成功并开启120秒冷却
       console.log('发码请求已发送，响应状态:', response.status);
 
-      // 设置成功状态和120秒冷却
-      newTableData[idx].lastSendResult = '✅ 发码请求已发送';
-      newTableData[idx].sendCooldown = 120;
-      newTableData[idx].sendTimer = setInterval(() => {
-        newTableData[idx].sendCooldown--;
-        if (newTableData[idx].sendCooldown <= 0) {
-          if (newTableData[idx].sendTimer) {
-            clearInterval(newTableData[idx].sendTimer);
+      // 创建发码冷却定时器
+      const sendTimer = setInterval(() => {
+        setTableData(prevData => {
+          const updatedData = [...prevData];
+          const currentRow = { ...updatedData[idx] };
+          currentRow.sendCooldown = Math.max(0, currentRow.sendCooldown - 1);
+
+          if (currentRow.sendCooldown <= 0) {
+            if (currentRow.sendTimer) {
+              clearInterval(currentRow.sendTimer);
+            }
+            currentRow.sendTimer = null;
           }
-          newTableData[idx].sendCooldown = 0;
-          newTableData[idx].sendTimer = null;
-        }
-        setTableData([...newTableData]);
+
+          updatedData[idx] = currentRow;
+          return updatedData;
+        });
       }, 1000);
 
-      setTableData([...newTableData]);
+      // 一次性设置成功状态和冷却时间
+      setTableData(prevData => {
+        const updatedData = [...prevData];
+        updatedData[idx] = {
+          ...updatedData[idx],
+          lastSendResult: '✅ 发码请求已发送',
+          sendCooldown: 120,
+          sendTimer: sendTimer
+        };
+        return updatedData;
+      });
 
     } catch (error) {
       console.error('发码请求失败:', error);
@@ -872,20 +953,42 @@ function App() {
         userFriendlyMessage = `❌ 发码请求失败: ${errorMessage}`;
       }
 
-      newTableData[idx].lastSendResult = userFriendlyMessage;
-      // 网络错误不设置冷却，用户可以立即重试
-      setTableData([...newTableData]);
+      // 设置错误状态，不设置冷却
+      setTableData(prevData => {
+        const updatedData = [...prevData];
+        updatedData[idx] = {
+          ...updatedData[idx],
+          lastSendResult: userFriendlyMessage
+        };
+        return updatedData;
+      });
     }
   };
 
   const markDone = (idx: number) => {
-    const newTableData = [...tableData];
-    newTableData[idx].status = '已使用';
-    newTableData[idx].isExpanded = false; // 标记完成后自动收起
-    if (newTableData[idx].timer) {
-      clearInterval(newTableData[idx].timer);
-    }
-    setTableData(newTableData);
+    setTableData(prevData => {
+      const updatedData = [...prevData];
+      const currentRow = { ...updatedData[idx] };
+
+      // 清理定时器
+      if (currentRow.timer) {
+        clearInterval(currentRow.timer);
+      }
+      if (currentRow.sendTimer) {
+        clearInterval(currentRow.sendTimer);
+      }
+
+      // 更新状态
+      currentRow.status = '已使用';
+      currentRow.isExpanded = false;
+      currentRow.timer = null;
+      currentRow.sendTimer = null;
+      currentRow.countdown = 0;
+      currentRow.sendCooldown = 0;
+
+      updatedData[idx] = currentRow;
+      return updatedData;
+    });
   };
 
   const exportCSV = () => {
